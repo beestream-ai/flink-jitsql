@@ -98,12 +98,29 @@ ensure_quiet_classloader() {
     echo "  config.yaml: disabled the leaked-classloader check (Hadoop shutdown-hook noise)"
 }
 
+# A deployment policy, not a query setting -- which is the whole point of
+# putting it here rather than in the example's source. A device's SIN and COS
+# come from its own math library, which is not required to agree with
+# java.lang.Math to the last bit, so a projection computing one is refused
+# unless the operator has said that is acceptable. It gives up the output-VALUE
+# guarantee and nothing else: a drifting value that could reach a filter, join,
+# grouping or sort is refused either way, so which rows come back never depends
+# on it. The haversine demo needs it; the regex and triage demos do not.
+ensure_approximate_projections() {
+    local cfg="$FLINK_HOME/conf/config.yaml"
+    [[ -f "$cfg" ]] || return 0
+    grep -q "^table.exec.accelerator.approximate-projections:" "$cfg" && return 0
+    printf '\ntable.exec.accelerator.approximate-projections: true\n' >> "$cfg"
+    echo "  config.yaml: allowed approximate projections (device SIN/COS may differ in the last bit)"
+}
+
 # REUSE=1 keeps a cluster that is already up, so successive demos land in the
 # same web UI and the earlier jobs stay visible. A restart is still required
 # whenever the TaskManager JVM options change -- the print flags -- because
 # those are only read at JVM start.
 cluster_up() {
     ensure_quiet_classloader
+    ensure_approximate_projections
     if [[ "${REUSE:-0}" == 1 ]] && cluster_running; then
         echo "  reusing the cluster already running at http://localhost:8081"
         return 0

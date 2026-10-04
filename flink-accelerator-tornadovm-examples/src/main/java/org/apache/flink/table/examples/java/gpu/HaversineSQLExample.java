@@ -134,18 +134,23 @@ public final class HaversineSQLExample {
 
         // ---- the switch, and the whole of it ---------------------------------------------
         //
-        // Three session settings. Nothing below this block knows an accelerator exists.
+        // One accelerator setting here. Nothing below this block knows an accelerator exists.
         //
         // enabled                 offer eligible subtrees to whatever provider is on the
         //                         TaskManager's classpath. Off by default.
         //
-        // approximate-projections allow a projection whose value a device may round differently
-        //                         from java.lang.Math. SIN and the rest come from the device's own
-        //                         math library, which is not required to agree with Flink's to the
-        //                         last bit, so this is off by default. It gives up the output-VALUE
-        //                         guarantee and nothing else: an offload whose drifting value could
-        //                         reach a filter, join, grouping or sort is refused either way, so
-        //                         which rows a query returns never depends on it.
+        // This query also needs table.exec.accelerator.approximate-projections, because SIN and
+        // COS come from the device's own math library and it is not required to agree with
+        // java.lang.Math to the last bit. That one is NOT set here, deliberately: it is a policy
+        // the cluster operator decides, not something a query author should be writing, and the
+        // demo scripts put it in config.yaml where it belongs (demos/common.sh,
+        // ensure_approximate_projections). Run this example against a cluster that has not set it
+        // and the projection is refused, with EXPLAIN naming the key -- which is the correct
+        // behaviour, not a missing step.
+        //
+        // What it gives up is the output-VALUE guarantee and nothing else: an offload whose
+        // drifting value could reach a filter, join, grouping or sort is refused either way, so
+        // which rows a query returns never depends on it.
         //
         // default-parallelism     not an accelerator setting, but needed here, because
         //                         table.exec.accelerator.max-parallelism defaults to 1 and the
@@ -155,9 +160,6 @@ public final class HaversineSQLExample {
         tableEnv.getConfig()
                 .getConfiguration()
                 .setString("table.exec.accelerator.enabled", Boolean.toString(accelerate));
-        tableEnv.getConfig()
-                .getConfiguration()
-                .setString("table.exec.accelerator.approximate-projections", "true");
         tableEnv.getConfig()
                 .getConfiguration()
                 .setString(
