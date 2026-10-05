@@ -166,4 +166,8 @@ if [[ "$ARM" == Gpu ]]; then
     fi
 fi
 echo
-echo "==> stopping the cluster"
+if [[ "${LLM_BENCH_KEEP_CLUSTER:-0}" == 1 ]]; then
+    echo "==> leaving the cluster up: http://localhost:8081"
+else
+    echo "==> stopping the cluster"
+fi
