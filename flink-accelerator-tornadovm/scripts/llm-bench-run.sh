@@ -142,8 +142,14 @@ echo "$OUT" | grep -oE '@@TRIAGE.*' | tr ' ' '\n' | grep '=' | awk -F= '
     $1=="decode_tok_s"      { printf "  %-26s %s tokens/s\n", "decode throughput", $2 }
     $1=="inference_wall_ms" { printf "  %-26s %s ms\n", "inference, end to end", $2 }'
 
+# Read from what the run reported, not from the --warm flag. Reusing a cluster between
+# demos leaves the model resident, so a run without --warm is warm anyway, and the flag
+# had the label contradicting the "model already resident" line directly above it.
+RESIDENT="$(echo "$OUT" | grep -oE 'resident=(true|false)' | head -1 | cut -d= -f2)"
 printf '  \033[1mflink run wall time: %s s\033[0m%s\n' "$WALL" \
-       "$( ((WARM)) && echo '  (warm: the engine was already resident)' || echo '  (COLD: this run loaded the model)')"
+       "$( [[ "$RESIDENT" == true ]] \
+            && echo '  (warm: the model was already resident)' \
+            || echo '  (COLD: this run loaded the model)')"
 
 # Where the offload decision was actually taken -- the plan only says a subtree is eligible.
 #
