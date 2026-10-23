@@ -133,6 +133,20 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
                 engine.batchCount(),
                 executeNanos / 1_000_000,
                 at);
+        // The per-stage split this path could not report until the engine collected one.
+        // execute() CONTAINS copy-in + kernel + copy-out; compile is once per task, not per
+        // batch. Named the same way OffloadMetrics names them so one parser reads both.
+        LOG.info(
+                "gram stages: copy-in {} ms, kernel {} ms, copy-out {} ms, compile {} ms,"
+                        + " bytes in {} MiB, bytes out {} MiB (execute {} ms contains the three"
+                        + " transfers)",
+                engine.copyInNanos() / 1_000_000,
+                engine.kernelNanos() / 1_000_000,
+                engine.copyOutNanos() / 1_000_000,
+                engine.compileNanos() / 1_000_000,
+                engine.bytesIn() / 1048576,
+                engine.bytesOut() / 1048576,
+                executeNanos / 1_000_000);
     }
 
     private static double read(RowData row, int field, GpuValueType type) {

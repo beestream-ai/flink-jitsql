@@ -114,6 +114,15 @@ public final class GpuGramEngine implements AutoCloseable {
     private long batches;
     private long rowCount;
 
+    // The per-stage device profile, summed across batches. TornadoVM reports these per execution
+    // and the plan is built with ProfilerMode.SILENT so they are populated.
+    private long copyInNanos;
+    private long kernelNanos;
+    private long copyOutNanos;
+    private long compileNanos;
+    private long bytesIn;
+    private long bytesOut;
+
     private final boolean kernelContraction;
     private IntArray dims;
 
@@ -214,6 +223,9 @@ public final class GpuGramEngine implements AutoCloseable {
             scheduler.addWorkerGrid(name + ".contract", new WorkerGrid2D(features, features));
         }
         target.withGridScheduler(scheduler);
+        // SILENT collects the per-stage timings without printing them. Without it the profiler
+        // result is empty and the region can report only a device total.
+        target.withProfiler(uk.ac.manchester.tornado.api.enums.ProfilerMode.SILENT);
         return worker;
     }
 
@@ -272,10 +284,54 @@ public final class GpuGramEngine implements AutoCloseable {
         ClassLoader previous = current.getContextClassLoader();
         current.setContextClassLoader(generated.loader());
         try {
-            target.execute();
+            final uk.ac.manchester.tornado.api.TornadoExecutionResult result = target.execute();
+            // The per-stage split the study asked for and this engine did not collect. Without
+            // it the Gram region could report only a device total, and the breakdown had to say
+            // so rather than apportion it -- splitting a total by subtraction would charge
+            // Flink's own row handling to a transfer.
+            final uk.ac.manchester.tornado.api.TornadoProfilerResult profile =
+                    result.getProfilerResult();
+            if (profile != null) {
+                copyInNanos += profile.getDeviceWriteTime();
+                kernelNanos += profile.getDeviceKernelTime();
+                copyOutNanos += profile.getDeviceReadTime();
+                compileNanos += profile.getCompileTime();
+                bytesIn += profile.getTotalBytesCopyIn();
+                bytesOut += profile.getTotalBytesCopyOut();
+            }
         } finally {
             current.setContextClassLoader(previous);
         }
+    }
+
+    /** Device write time across every batch, nanoseconds. */
+    public long copyInNanos() {
+        return copyInNanos;
+    }
+
+    /** Device kernel time across every batch, nanoseconds. */
+    public long kernelNanos() {
+        return kernelNanos;
+    }
+
+    /** Device read time across every batch, nanoseconds. */
+    public long copyOutNanos() {
+        return copyOutNanos;
+    }
+
+    /** Compilation time, which is paid once per task rather than per batch. */
+    public long compileNanos() {
+        return compileNanos;
+    }
+
+    /** Bytes copied to the device across every batch. */
+    public long bytesIn() {
+        return bytesIn;
+    }
+
+    /** Bytes copied back across every batch. */
+    public long bytesOut() {
+        return bytesOut;
     }
 
     /** Entry {@code (i, j)} of the accumulated matrix. Symmetric, so the order does not matter. */

@@ -38,6 +38,8 @@ import org.apache.flink.table.gpu.operator.DeviceGram;
 import org.apache.flink.table.gpu.operator.GeneratedKernelEngine;
 import org.apache.flink.table.types.logical.RowType;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import uk.ac.manchester.tornado.api.GridScheduler;
 import uk.ac.manchester.tornado.api.TaskGraph;
 import uk.ac.manchester.tornado.api.TornadoExecutionPlan;
@@ -89,6 +91,8 @@ public final class DeviceParquetGramSource
                         DeviceParquetGramSource.FileSplit,
                         List<DeviceParquetGramSource.FileSplit>>,
                 Serializable {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DeviceParquetGramSource.class);
 
     private static final long serialVersionUID = 1L;
 
@@ -261,6 +265,9 @@ public final class DeviceParquetGramSource
         private final int d;
         private final boolean fp32;
         private final double[] total;
+        private long deviceNanos;
+        private long rowsIn;
+        private int filesIn;
         private boolean noMore;
         private boolean emitted;
         private boolean outstanding;
@@ -329,6 +336,17 @@ public final class DeviceParquetGramSource
                 }
                 output.collect(row);
                 emitted = true;
+                // A source substitution emits no planner verdict, so without this line nothing
+                // distinguishes a run that read the file on the device from one that did not.
+                LOG.info(
+                        "gram region: {} rows x {} features over {} file(s), {} ms on the device,"
+                                + " {}, contraction by {}",
+                        rowsIn,
+                        d,
+                        filesIn,
+                        deviceNanos / 1_000_000,
+                        fp32 ? "FP32" : "FP64",
+                        kernelContraction ? "kernel" : "cuBLAS");
             }
             return InputStatus.END_OF_INPUT;
         }
@@ -349,7 +367,11 @@ public final class DeviceParquetGramSource
             rowCount.set(0, rows);
             dims.set(0, rows);
             dims.set(2, rows);
+            final long started = System.nanoTime();
             plan.execute();
+            deviceNanos += System.nanoTime() - started;
+            rowsIn += rows;
+            filesIn++;
             // Accumulated at the width the query declared, not wider. Summing FP32 partials in a
             // double would make this arm more accurate than the CPU arm it is compared against,
             // which is a difference in the answer and not only in the clock.
