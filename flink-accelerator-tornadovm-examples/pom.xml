@@ -484,6 +484,44 @@ under the License.
 						</configuration>
 					</execution>
 					<execution>
+						<id>GramParquetSQLExample</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<classifier>GramParquetSQLExample</classifier>
+							<archive>
+								<manifestEntries>
+									<program-class>org.apache.flink.table.examples.java.gpu.GramParquetSQLExample</program-class>
+								</manifestEntries>
+							</archive>
+							<includes>
+								<include>org/apache/flink/table/examples/java/gpu/GramParquetSQLExample*</include>
+								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+							</includes>
+						</configuration>
+					</execution>
+					<execution>
+						<id>RiskScoringSQLExample</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<classifier>RiskScoringSQLExample</classifier>
+							<archive>
+								<manifestEntries>
+									<program-class>org.apache.flink.table.examples.java.gpu.RiskScoringSQLExample</program-class>
+								</manifestEntries>
+							</archive>
+							<includes>
+								<include>org/apache/flink/table/examples/java/gpu/RiskScoringSQLExample*</include>
+								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+							</includes>
+						</configuration>
+					</execution>
+					<execution>
 						<id>CudfSortSQLExample</id>
 						<phase>package</phase>
 						<goals>
@@ -631,6 +669,8 @@ under the License.
 								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-HaversineSQLExample.jar" tofile="${project.build.directory}/HaversineSQLExample.jar"/>
 								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-CudfSortSQLExample.jar" tofile="${project.build.directory}/CudfSortSQLExample.jar"/>
 															<copy file="${project.build.directory}/${project.artifactId}-${project.version}-CudfGroupBySQLExample.jar" tofile="${project.build.directory}/CudfGroupBySQLExample.jar"/>
+								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-RiskScoringSQLExample.jar" tofile="${project.build.directory}/RiskScoringSQLExample.jar"/>
+								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-GramParquetSQLExample.jar" tofile="${project.build.directory}/GramParquetSQLExample.jar"/>
 							</target>
 						</configuration>
 					</execution>

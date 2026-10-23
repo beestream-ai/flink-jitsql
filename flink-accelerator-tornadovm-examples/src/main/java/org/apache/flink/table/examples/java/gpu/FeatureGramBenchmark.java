@@ -96,12 +96,20 @@ public final class FeatureGramBenchmark {
             System.out.printf("%s does not exist yet%n", parsed.data);
             generate(parsed);
         }
+        if (parsed.gpu && !"sin".equals(parsed.map)) {
+            // FeatureGramEngine hardcodes TornadoMath.sin as its feature map, so a --gpu arm
+            // with any other map would compute a different matrix from the SQL arms and the
+            // comparison would be meaningless. Refuse rather than report it.
+            throw new IllegalArgumentException(
+                    "--gpu true computes SIN only; --map " + parsed.map + " is SQL-arm only");
+        }
 
         System.out.printf(
-                "data=%s  rows=%,d  cols=%d  parallelism=%s  gpu=%s  offload=%s  fused=%s  runs=%d  batch=%,d%n",
+                "data=%s  rows=%,d  cols=%d  map=%s  parallelism=%s  gpu=%s  offload=%s  fused=%s  runs=%d  batch=%,d%n",
                 parsed.data,
                 parsed.rows,
                 parsed.cols,
+                parsed.map,
                 parsed.parallelism > 0 ? Integer.toString(parsed.parallelism) : "(default)",
                 parsed.gpu,
                 parsed.offload,
@@ -126,7 +134,27 @@ public final class FeatureGramBenchmark {
             } else {
                 agree(first, seen);
             }
+            dump(seen, run);
         }
+    }
+
+    /**
+     * Writes the whole upper triangle where {@code GRAM_DUMP} points, one value a line.
+     *
+     * <p>The run line prints a trace, which checks the diagonal only. A claim against an
+     * independent reference needs every entry, per repetition, so run-to-run disagreement is
+     * visible. Off unless the variable is set.
+     */
+    private static void dump(double[] upper, int run) throws java.io.IOException {
+        final String where = System.getenv("GRAM_DUMP");
+        if (where == null || where.isEmpty()) {
+            return;
+        }
+        final StringBuilder out = new StringBuilder(upper.length * 24);
+        for (double v : upper) {
+            out.append(Double.toString(v)).append('\n');
+        }
+        Files.write(Paths.get(where + ".run" + run), out.toString().getBytes("UTF-8"));
     }
 
     /**
@@ -148,7 +176,7 @@ public final class FeatureGramBenchmark {
         }
         StringJoiner features = new StringJoiner(", ");
         for (int c = 0; c < args.cols; c++) {
-            features.add(String.format("SIN(c%d) AS f%d", c, c));
+            features.add(String.format("%s AS f%d", feature(args.map, c), c));
         }
         String sql =
                 String.format(
@@ -161,6 +189,29 @@ public final class FeatureGramBenchmark {
                 upper[i] = ((Number) row.getField(i)).doubleValue();
             }
             return upper;
+        }
+    }
+
+    /**
+     * The feature map, as SQL over column {@code c}.
+     *
+     * <p>Four maps of rising per-element cost over an identical shape — same rows, same bytes read,
+     * same GEMM, same output — so the only thing that varies is what the kernel evaluates per
+     * element: raw second moment, quadratic expansion, bounded periodic basis, damped oscillatory
+     * (Gabor-like) basis.
+     */
+    private static String feature(String map, int c) {
+        switch (map) {
+            case "ident":
+                return String.format("c%d", c);
+            case "square":
+                return String.format("c%d * c%d", c, c);
+            case "sin":
+                return String.format("SIN(c%d)", c);
+            case "gabor":
+                return String.format("SIN(c%d) * EXP(-c%d * c%d)", c, c, c);
+            default:
+                throw new IllegalArgumentException("unknown feature map " + map);
         }
     }
 
@@ -362,6 +413,7 @@ public final class FeatureGramBenchmark {
         private boolean offload;
         private boolean fuseAggregate = true;
         private boolean generate;
+        private String map = "sin";
 
         static Args parse(String[] argv) {
             Args args = new Args();
@@ -385,6 +437,8 @@ public final class FeatureGramBenchmark {
                     args.fuseAggregate = Boolean.parseBoolean(argv[++i]);
                 } else if ("--gpu".equals(flag)) {
                     args.gpu = Boolean.parseBoolean(argv[++i]);
+                } else if ("--map".equals(flag)) {
+                    args.map = argv[++i];
                 } else if ("--generate".equals(flag)) {
                     args.generate = true;
                 } else {
