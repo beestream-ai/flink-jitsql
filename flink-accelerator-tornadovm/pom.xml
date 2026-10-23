@@ -65,12 +65,6 @@ under the License.
 			<version>${tornado.version}</version>
 			<scope>provided</scope>
 		</dependency>
-		<dependency>
-			<groupId>io.github.beehive-lab</groupId>
-			<artifactId>tornado-annotation</artifactId>
-			<version>${tornado.version}</version>
-			<scope>provided</scope>
-		</dependency>
 		<!--
 			The cuBLAS binding, for the hybrid path: a generated kernel and a library call sharing
 			device buffers in one TaskGraph. Nothing in the Calc operator uses it, so a
