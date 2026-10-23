@@ -136,6 +136,36 @@ class GpuGramSpecTest {
     }
 
     @Test
+    void refusesAnFp32Aggregate() {
+        // GpuGramEngine is FP64 throughout, so a FLOAT query read its columns as doubles and
+        // returned a matrix wrong in all 528 entries and different on every run, while the query
+        // succeeded. Measured 2026-10-20 against a numpy reference; the FP64 control agreed to
+        // 1e-12. The recogniser must not promise what the engine does not implement.
+        final LogicalType floatType = new org.apache.flink.table.types.logical.FloatType(false);
+        List<AccelExpression> products = new ArrayList<>();
+        for (int i = 0; i < 8; i++) {
+            for (int j = i; j < 8; j++) {
+                products.add(product(feature(i), feature(j)));
+            }
+        }
+        LogicalType[] inFields = new LogicalType[8];
+        Arrays.fill(inFields, floatType);
+        LogicalType[] projFields = new LogicalType[products.size()];
+        Arrays.fill(projFields, floatType);
+        RowType projType = RowType.of(projFields);
+        AccelProject projection =
+                new AccelProject(products, new AccelInput(RowType.of(inFields)), projType);
+        List<AccelAggCall> calls = new ArrayList<>();
+        for (int i = 0; i < products.size(); i++) {
+            calls.add(new AccelAggCall(AccelAggFunction.SUM, i, floatType));
+        }
+        AccelAggregate agg = new AccelAggregate(new int[0], calls, projection, projType);
+        GpuGramSpec.Recognition r = GpuGramSpec.recognise(agg);
+        assertThat(r.recognised()).isFalse();
+        assertThat(r.reason()).contains("only DOUBLE is served");
+    }
+
+    @Test
     void refusesAGroupedAggregate() {
         AccelAggregate grouped =
                 new AccelAggregate(

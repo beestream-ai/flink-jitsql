@@ -196,14 +196,22 @@ public final class GpuGramSpec implements Serializable {
                 // the operator reads back is not the triangle the query asked for.
                 return Recognition.no("sum " + i + " is not SUM over projected column " + i);
             }
-            // FLOAT beside DOUBLE. A Gram matrix is the left-hand side of a normal equation and
-            // a narrowed contraction propagates there, so FP64 remains the default and the choice
-            // is the query's: Flink sums a FLOAT column in a FLOAT accumulator, so an FP32 query
-            // is FP32 on both arms and serving it in FP32 changes no arithmetic the query did not
-            // already ask for. Mixed widths across the sums are refused.
+            // DOUBLE only, and deliberately broader than the defect. GpuGramEngine -- the
+            // operator path -- is DoubleArray throughout and calls cublasDgemm unconditionally,
+            // so a FLOAT query there returned a matrix wrong in all 528 entries and different on
+            // every run, while the query succeeded. DeviceParquetGramSource does implement FP32,
+            // but this recogniser gates both paths and that one has never been verified at FLOAT,
+            // so it is refused here too rather than admitted on the strength of the other path's
+            // failure. Readmitting FLOAT means an FP32 engine (FloatArray, cublasSgemm) and a
+            // correctness run for the source path.
             final LogicalTypeRoot root = call.outputType().getTypeRoot();
-            if (root != LogicalTypeRoot.DOUBLE && root != LogicalTypeRoot.FLOAT) {
-                return Recognition.no("sum " + i + " is neither a DOUBLE nor a FLOAT");
+            if (root != LogicalTypeRoot.DOUBLE) {
+                return Recognition.no(
+                        "sum "
+                                + i
+                                + " is "
+                                + root
+                                + "; only DOUBLE is served, because the engine is FP64 throughout");
             }
             if (root != calls.get(0).outputType().getTypeRoot()) {
                 return Recognition.no("sum " + i + " does not have the width of sum 0");
