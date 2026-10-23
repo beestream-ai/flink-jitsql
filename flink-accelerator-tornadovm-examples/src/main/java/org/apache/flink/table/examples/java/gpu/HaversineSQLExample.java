@@ -164,6 +164,14 @@ public final class HaversineSQLExample {
                 .getConfiguration()
                 .setString(
                         "table.exec.resource.default-parallelism", Integer.toString(parallelism));
+        // The accelerator's own cap. It has to be raised alongside the job's parallelism or every
+        // subtask above 1 is declined and the query runs on the CPU while still returning the
+        // right answer -- which is a measurement of nothing that looks like a measurement.
+        // It must be set HERE: a -D on bin/flink run reaches the cluster configuration, not this
+        // TableEnvironment.
+        tableEnv.getConfig()
+                .getConfiguration()
+                .setString("table.exec.accelerator.max-parallelism", Integer.toString(parallelism));
         // ----------------------------------------------------------------------------------
 
         // NOT NULL is the one thing the query author has to write; see the class comment.
