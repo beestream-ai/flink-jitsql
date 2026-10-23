@@ -101,7 +101,14 @@ public final class NearestNeighbourSQLExample {
         final TableEnvironment env = TableEnvironment.create(settings);
 
         // Environmental parameters, every one of them. Nothing here is a query-level knob.
-        env.getConfig().getConfiguration().setString("table.exec.accelerator.enabled", "true");
+        // A CPU arm, so the region's device time can be compared with the query Flink would
+        // otherwise run. At the full shape that query is a nested-loop join over billions of
+        // pairs and takes hours, which is why it has never been measured; at a reduced shape it
+        // is perfectly tractable, and a speedup measured there is a real end-to-end number for
+        // a real end-to-end query.
+        env.getConfig()
+                .getConfiguration()
+                .setString("table.exec.accelerator.enabled", Boolean.toString(!parsed.cpu));
         env.getConfig()
                 .getConfiguration()
                 .setString("table.exec.accelerator.approximate-projections", "true");
@@ -131,8 +138,14 @@ public final class NearestNeighbourSQLExample {
                         + "FROM Queries q, Corpus p\n"
                         + "GROUP BY q.qid";
 
-        if (parsed.explain) {
+        if (parsed.explain || parsed.explainOnly) {
             System.out.println(env.explainSql(sql));
+        }
+        if (parsed.explainOnly) {
+            // Planning only. Nothing is submitted and nothing touches the device, so this is
+            // usable when the machine is in a state where a timing would not be valid -- which
+            // is exactly when it is most useful to know whether the region is accepted.
+            return;
         }
 
         System.out.printf(
@@ -335,6 +348,8 @@ public final class NearestNeighbourSQLExample {
     private static final class Args {
         private boolean generate;
         private boolean explain;
+        private boolean explainOnly;
+        private boolean cpu;
         private String data = BenchData.resolve("nn").toString();
         private int dim = 256;
         private int probeRows = 65_536;
@@ -359,6 +374,12 @@ public final class NearestNeighbourSQLExample {
                         break;
                     case "--explain":
                         args.explain = true;
+                        break;
+                    case "--explain-only":
+                        args.explainOnly = true;
+                        break;
+                    case "--cpu":
+                        args.cpu = true;
                         break;
                     case "--data":
                         args.data = argv[++i];

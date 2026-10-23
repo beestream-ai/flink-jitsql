@@ -1448,6 +1448,26 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
     }
 
     /**
+     * The narrowest region this provider will take, which is {@link
+     * org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec#MIN_WIDTH} unless a measurement
+     * overrides it.
+     *
+     * <p>The floor is overridable only by a property the TaskManager JVM is started with: a query
+     * cannot reach it and the shipped default is unchanged. It exists so the floor can be measured
+     * through SQL, which it otherwise refuses outright.
+     *
+     * <p>Note the floor's original rationale -- that a fused kernel matches the GEMM below 64 -- is
+     * false. Measured 2026-10-23 (X5), cuBLAS wins at every width from 8 to 64 and its margin
+     * widens with the width: 2.61x at d=8, 25.74x at d=64. The floor is therefore refusing regions
+     * the library would serve well; revisiting its value is a separate change.
+     */
+    private static int minimumWidth() {
+        return Integer.getInteger(
+                "flink.accelerator.similarity.minWidth",
+                org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec.MIN_WIDTH);
+    }
+
+    /**
      * A nearest-neighbour query as one region over two files.
      *
      * <p>{@code Aggregate(Project(Join(Scan, Scan)))}, where the projection is an inner product
@@ -1467,13 +1487,12 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
             return Optional.empty();
         }
         final org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec spec = recognised.spec();
-        if (spec.width() < org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec.MIN_WIDTH) {
+        if (spec.width() < minimumWidth()) {
             LOG.info(
-                    "declining the nearest-neighbour region: {} paired columns is below {}, where"
-                            + " a fused kernel matches the GEMM and the device context is not"
-                            + " repaid",
+                    "declining the nearest-neighbour region: {} paired columns is below the"
+                            + " configured floor of {}",
                     spec.width(),
-                    org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec.MIN_WIDTH);
+                    minimumWidth());
             return Optional.empty();
         }
         final java.util.List<String> corpusPaths =

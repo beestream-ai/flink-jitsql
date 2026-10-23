@@ -471,13 +471,17 @@ public final class DeviceParquetSimilaritySource
             dims.set(2, d);
 
             final boolean materialise = source.contraction != Contraction.FUSED;
-            scores =
-                    new FloatArray(
-                            materialise
-                                    ? (long) rows * corpusRows > Integer.MAX_VALUE
-                                            ? 1
-                                            : rows * corpusRows
-                                    : 1);
+            try {
+                scores =
+                        new FloatArray(
+                                materialise
+                                        ? (long) rows * corpusRows > Integer.MAX_VALUE
+                                                ? 1
+                                                : rows * corpusRows
+                                        : 1);
+            } catch (OutOfMemoryError exhausted) {
+                throw directMemoryExhausted(rows, corpusRows, d, materialise, exhausted);
+            }
 
             // Graph 0: the corpus, read once and left where it lands.
             final TaskGraph corpusGraph =
@@ -581,6 +585,75 @@ public final class DeviceParquetSimilaritySource
             // Once, before anything consumes it. Everything after this reads the corpus where it
             // already is.
             plan.withGraph(0).execute();
+        }
+
+        /**
+         * Rewrites a direct-memory exhaustion into the reason, the arithmetic and the remedy.
+         *
+         * <p>These buffers are host-side {@code TornadoMemorySegment}s, so they come out of {@code
+         * -XX:MaxDirectMemorySize}, which Flink derives from {@code
+         * taskmanager.memory.task.off-heap.size}. **Every subtask allocates its own set**, so the
+         * requirement scales with parallelism while the budget does not — which is why this region
+         * fails at a parallelism the same cluster runs happily for other queries.
+         *
+         * <p>Left alone it surfaces as {@code java.lang.OutOfMemoryError: Direct buffer memory}
+         * raised inside {@code FloatArray.<init>}, naming neither the setting to change nor the
+         * fact that parallelism multiplied the demand. The score matrix dominates: at d=256 with 2
+         * 048 probe rows against a 131 072-row corpus it is 1 GiB by itself.
+         *
+         * <p>Reactive rather than predictive on purpose. A pre-flight check has to know how many
+         * subtasks share this JVM, and {@code SourceReaderContext.currentParallelism()} does not
+         * report it reliably here — a first version of this check used it, computed a total of one
+         * subtask's worth, and passed at exactly the parallelism that then failed. Catching the
+         * error cannot be wrong about when the budget ran out.
+         */
+        private IllegalStateException directMemoryExhausted(
+                int rows, int corpusRows, int d, boolean materialise, OutOfMemoryError cause) {
+            final long scoreBytes = materialise ? (long) rows * corpusRows * Float.BYTES : 0L;
+            final long corpusBytes = (long) corpusRows * d * Float.BYTES;
+            final long probeBytes = (long) rows * d * Float.BYTES;
+            final long need = scoreBytes + corpusBytes + probeBytes;
+            final long budget = directMemoryLimit();
+            final double gib = 1L << 30;
+            final IllegalStateException explained =
+                    new IllegalStateException(
+                            String.format(
+                                    "ran out of HOST direct memory building the "
+                                            + "nearest-neighbour region. This subtask needs %.2f GiB "
+                                            + "(score matrix %.2f + corpus %.2f + probe %.3f)%s. "
+                                            + "Every subtask allocates its own set and they share "
+                                            + "one JVM, so the demand scales with parallelism while "
+                                            + "the budget does not. These are host buffers, not "
+                                            + "device ones: the limit is -XX:MaxDirectMemorySize, "
+                                            + "which Flink derives from "
+                                            + "taskmanager.memory.task.off-heap.size. Raise that "
+                                            + "(and taskmanager.memory.process.size to match, or the "
+                                            + "TaskManager will refuse to start), or lower "
+                                            + "table.exec.accelerator.max-parallelism.",
+                                    need / gib,
+                                    scoreBytes / gib,
+                                    corpusBytes / gib,
+                                    probeBytes / gib,
+                                    budget > 0
+                                            ? String.format(
+                                                    " and the JVM limit is %.2f GiB", budget / gib)
+                                            : ""));
+            explained.initCause(cause);
+            return explained;
+        }
+
+        /** {@code -XX:MaxDirectMemorySize}, or 0 when it cannot be read. */
+        private static long directMemoryLimit() {
+            try {
+                final Class<?> vm = Class.forName("jdk.internal.misc.VM");
+                return (long) vm.getMethod("maxDirectMemory").invoke(null);
+            } catch (Throwable notAvailable) {
+                try {
+                    return Long.parseLong(System.getProperty("sun.nio.MaxDirectMemorySize", "0"));
+                } catch (NumberFormatException unparsable) {
+                    return 0L;
+                }
+            }
         }
 
         private void closePlan() {
