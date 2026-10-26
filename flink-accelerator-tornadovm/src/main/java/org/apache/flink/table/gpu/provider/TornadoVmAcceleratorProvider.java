@@ -1404,9 +1404,18 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         if (!sort.ascending()) {
             return Optional.empty();
         }
+        // Through the scan's own column map, not straight to cuDF -- the same reason
+        // scanAggregateSource gives below. Projection pushdown makes the produced row a subset
+        // of the file, so field i of the row is not column i of the file, and a top-N read as
+        // though it were orders by one column of the file and returns another: plausible
+        // numbers, of the right types, from the wrong columns.
+        final int[] columns = scan.projectedFields();
+        if (columns.length != row.getFieldCount()) {
+            return Optional.empty();
+        }
         return Optional.of(
                 new org.apache.flink.table.gpu.source.DeviceParquetTopNSource(
-                        scan.paths(), sort.sortField(), sort.limit(), row));
+                        scan.paths(), sort.sortField(), sort.limit(), row, columns));
     }
 
     /**

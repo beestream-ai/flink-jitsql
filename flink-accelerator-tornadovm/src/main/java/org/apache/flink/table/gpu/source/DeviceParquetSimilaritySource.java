@@ -455,33 +455,47 @@ public final class DeviceParquetSimilaritySource
          */
         private void buildCorpus() {
             corpusRows = (int) Cudf.parquetMetadata(source.corpusPath)[0];
-            corpus = new FloatArray(Math.max(1, corpusRows) * d);
+            final int corpusCells = Math.max(1, corpusRows);
+            if ((long) corpusCells * d > Integer.MAX_VALUE) {
+                throw tooLargeToStage("the corpus", (long) corpusCells * d);
+            }
+            try {
+                corpus = new FloatArray(corpusCells * d);
+            } catch (OutOfMemoryError exhausted) {
+                // Reported with no probe rows because none are allocated yet; the corpus and
+                // the width are what the operator can act on at this point anyway.
+                throw directMemoryExhausted(0, corpusRows, d, false, exhausted);
+            }
             corpusKeys = new IntArray(1);
             corpusPathHolder = new StringBuilder(source.corpusPath);
         }
 
         private void build(int rows) {
             probePathHolder = new StringBuilder();
-            probe = new FloatArray(rows * d);
-            probeKeys = new IntArray(rows);
-            best = new FloatArray(rows);
+            final boolean materialise = source.contraction != Contraction.FUSED;
+            if ((long) rows * d > Integer.MAX_VALUE) {
+                throw tooLargeToStage("the probe batch", (long) rows * d);
+            }
+            if (materialise && (long) rows * corpusRows > Integer.MAX_VALUE) {
+                // Refused rather than sized down. The 1 below is the placeholder the FUSED
+                // contraction uses because it has no score matrix at all; handing that same
+                // one-element buffer to a contraction that does materialise let cublasSgemm
+                // be asked to write rows * corpusRows floats into four bytes, which is an
+                // out-of-bounds device write and not something the host would be told about.
+                throw tooLargeToStage("the score matrix", (long) rows * corpusRows);
+            }
+            try {
+                probe = new FloatArray(rows * d);
+                probeKeys = new IntArray(rows);
+                best = new FloatArray(rows);
+                scores = new FloatArray(materialise ? rows * corpusRows : 1);
+            } catch (OutOfMemoryError exhausted) {
+                throw directMemoryExhausted(rows, corpusRows, d, materialise, exhausted);
+            }
             dims = new IntArray(3);
             dims.set(0, rows);
             dims.set(1, corpusRows);
             dims.set(2, d);
-
-            final boolean materialise = source.contraction != Contraction.FUSED;
-            try {
-                scores =
-                        new FloatArray(
-                                materialise
-                                        ? (long) rows * corpusRows > Integer.MAX_VALUE
-                                                ? 1
-                                                : rows * corpusRows
-                                        : 1);
-            } catch (OutOfMemoryError exhausted) {
-                throw directMemoryExhausted(rows, corpusRows, d, materialise, exhausted);
-            }
 
             // Graph 0: the corpus, read once and left where it lands.
             final TaskGraph corpusGraph =
@@ -607,6 +621,27 @@ public final class DeviceParquetSimilaritySource
          * subtask's worth, and passed at exactly the parallelism that then failed. Catching the
          * error cannot be wrong about when the budget ran out.
          */
+        /**
+         * A buffer this read would need and cannot address.
+         *
+         * <p>Separate from {@link #directMemoryExhausted} because it is a different failure: that
+         * one is the machine running out of memory it was willing to give, this one is a buffer
+         * whose element count does not fit in the {@code int} a {@code FloatArray} takes. No budget
+         * makes it allocatable, so the message names the batch size rather than the memory limit.
+         */
+        private IllegalStateException tooLargeToStage(String what, long elements) {
+            return new IllegalStateException(
+                    "the nearest-neighbour region cannot stage "
+                            + what
+                            + ": it needs "
+                            + elements
+                            + " elements, past the "
+                            + Integer.MAX_VALUE
+                            + " a device array can address. Lower"
+                            + " table.exec.accelerator.batch-size so fewer probe rows are read"
+                            + " at once, or narrow the corpus.");
+        }
+
         private IllegalStateException directMemoryExhausted(
                 int rows, int corpusRows, int d, boolean materialise, OutOfMemoryError cause) {
             final long scoreBytes = materialise ? (long) rows * corpusRows * Float.BYTES : 0L;

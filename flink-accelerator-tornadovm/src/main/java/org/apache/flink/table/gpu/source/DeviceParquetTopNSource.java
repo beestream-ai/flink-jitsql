@@ -71,11 +71,25 @@ public final class DeviceParquetTopNSource
     private final long limit;
     private final RowType rowType;
 
-    public DeviceParquetTopNSource(List<String> paths, int sortField, long limit, RowType rowType) {
+    /**
+     * Which column of the file each field of the produced row comes from.
+     *
+     * <p>Carried because the two index spaces are not the same one. {@code sortField} and the
+     * positions of the produced row are indexes into that row; cuDF is told which columns of the
+     * <em>file</em> to read. Projection pushdown makes the produced row a subset, so field i of the
+     * row is not column i of the file -- and reading it as though it were returns a row of the
+     * right shape and the right types built from the wrong columns, with nothing to notice. The
+     * identity map is what a scan with no pushdown carries, so this is never null.
+     */
+    private final int[] projectedFields;
+
+    public DeviceParquetTopNSource(
+            List<String> paths, int sortField, long limit, RowType rowType, int[] projectedFields) {
         this.paths = new ArrayList<>(paths);
         this.sortField = sortField;
         this.limit = limit;
         this.rowType = rowType;
+        this.projectedFields = projectedFields.clone();
     }
 
     /** One file, or one directory of them, as a split. */
@@ -100,7 +114,7 @@ public final class DeviceParquetTopNSource
 
     @Override
     public SourceReader<RowData, FileSplit> createReader(SourceReaderContext context) {
-        return new DeviceReader(sortField, limit, rowType);
+        return new DeviceReader(sortField, limit, rowType, projectedFields);
     }
 
     @Override
@@ -241,13 +255,15 @@ public final class DeviceParquetTopNSource
         private final int sortField;
         private final long limit;
         private final RowType rowType;
+        private final int[] projectedFields;
         private final List<FileSplit> pending = new ArrayList<>();
         private boolean noMoreSplits;
 
-        DeviceReader(int sortField, long limit, RowType rowType) {
+        DeviceReader(int sortField, long limit, RowType rowType, int[] projectedFields) {
             this.sortField = sortField;
             this.limit = limit;
             this.rowType = rowType;
+            this.projectedFields = projectedFields;
         }
 
         @Override
@@ -256,7 +272,8 @@ public final class DeviceParquetTopNSource
         @Override
         public InputStatus pollNext(ReaderOutput<RowData> output) throws Exception {
             if (!pending.isEmpty()) {
-                DeviceTopNRead.emit(pending.remove(0).path, sortField, limit, rowType, output);
+                DeviceTopNRead.emit(
+                        pending.remove(0).path, sortField, limit, rowType, projectedFields, output);
             }
             if (noMoreSplits && pending.isEmpty()) {
                 return InputStatus.END_OF_INPUT;
@@ -293,18 +310,31 @@ public final class DeviceParquetTopNSource
         private DeviceTopNRead() {}
 
         static void emit(
-                String file, int sortField, long limit, RowType rowType, ReaderOutput<RowData> out)
+                String file,
+                int sortField,
+                long limit,
+                RowType rowType,
+                int[] projectedFields,
+                ReaderOutput<RowData> out)
                 throws Exception {
             final long[] meta = uk.ac.manchester.tornado.cudf.Cudf.parquetMetadata(file);
             final int rows = (int) meta[0];
             final int fields = rowType.getFieldCount();
             final int valueColumns = fields - 1;
 
+            // Two arrays because there are two index spaces. doubleColumns holds positions in
+            // the produced row, which is what setField below takes; doubleFileColumns holds the
+            // file columns those positions come from, which is what cuDF is handed. They differ
+            // whenever projection pushdown has run, and they are equal only by coincidence when
+            // it has not.
             final int[] doubleColumns = new int[valueColumns];
+            final int[] doubleFileColumns = new int[valueColumns];
             int next = 0;
             for (int i = 0; i < fields; i++) {
                 if (i != sortField) {
-                    doubleColumns[next++] = i;
+                    doubleColumns[next] = i;
+                    doubleFileColumns[next] = projectedFields[i];
+                    next++;
                 }
             }
 
@@ -343,8 +373,8 @@ public final class DeviceParquetTopNSource
                                     file,
                                     0,
                                     0,
-                                    sortField,
-                                    doubleColumns,
+                                    projectedFields[sortField],
+                                    doubleFileColumns,
                                     (long) rows,
                                     keys,
                                     values)
