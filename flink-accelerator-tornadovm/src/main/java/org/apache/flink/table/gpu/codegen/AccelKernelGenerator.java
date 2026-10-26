@@ -239,6 +239,21 @@ public final class AccelKernelGenerator {
 
         for (int field : alsoStage) {
             final AccelExpression source = passThroughOf(project, field);
+            if (source != null && source.outputType().isNullable()) {
+                // Refused rather than staged. A column reaches this loop because something
+                // above wants it carried through -- a grouping key -- and a column that is
+                // only carried is never rendered, so it never passes through the
+                // AccelInputRef arm that registers a nullable input. Staging it would leave
+                // carriesValidity() false with a nullable key in the batch, and the grouped
+                // aggregate's only null guard is exactly that flag: a NULL key would stage
+                // as the zeroed slot value and be summed into the group for 0, where Flink
+                // puts it in a group of its own.
+                //
+                // Declining is the sanctioned answer here, not a limitation worked around:
+                // the author is told to declare the column NOT NULL, which is the one thing
+                // a query author is asked to do for a region to be eligible.
+                return Optional.empty();
+            }
             if (source == null || !isDoubleSafeInput(source.outputType())) {
                 // Asked to stage something this projection does not pass through, or a type the
                 // staging cannot hold. Declining is the caller's cue to fall back rather than
@@ -293,6 +308,17 @@ public final class AccelKernelGenerator {
             return Optional.empty();
         }
         boolean carriesValidity = carriesValidity(NULLABLE_INPUTS.get());
+        if (carriesValidity && computedValidity.size() > VALIDITY_BITS) {
+            // The output validity word is one int a row, exactly as the input one is, and
+            // renderClass packs bit i for computed column i. Java masks an int shift to five
+            // bits, so column 32 would write and read bit 0: a row with the first column
+            // absent would report the thirty-third absent too, and the thirty-third's own
+            // bit would land on the first. inputs32Exceeded guards the mirror case, but it
+            // counts staged input columns, which is a different set from the computed
+            // outputs counted here -- a projection of 33 expressions over 2 columns passes
+            // it and overflows this.
+            return Optional.empty();
+        }
         String source =
                 renderClass(
                         className,
@@ -524,11 +550,14 @@ public final class AccelKernelGenerator {
     }
 
     /** Renders one expression, registering any column it reads. Null if it cannot be written. */
+    /** Bits in the validity word a row carries, for staged inputs and computed outputs alike. */
+    private static final int VALIDITY_BITS = 32;
+
     /** More staged columns than one int of validity can describe. */
     private static boolean inputs32Exceeded(AccelNode subtree) {
         java.util.Set<Integer> referenced = new java.util.HashSet<>();
         collectRefs(subtree, referenced);
-        return referenced.size() > 32;
+        return referenced.size() > VALIDITY_BITS;
     }
 
     private static void collectRefs(AccelNode node, java.util.Set<Integer> into) {
