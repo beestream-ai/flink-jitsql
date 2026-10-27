@@ -1518,6 +1518,28 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                 contraction =
                         org.apache.flink.table.gpu.source.DeviceParquetSimilaritySource.Contraction
                                 .fromProperty();
+        if (contraction
+                        == org.apache.flink.table.gpu.source.DeviceParquetSimilaritySource
+                                .Contraction.TILED
+                && spec.width() % org.apache.flink.table.gpu.operator.DeviceSimilarity.TILE != 0) {
+            // scoreTiled contracts d / TILE tiles, and integer division drops the remainder:
+            // every column past the last whole tile is left out of the inner product with
+            // nothing to say so. At d = 8 that is the whole product, so every score is 0.0f,
+            // and rowMax answers 0 which is above NO_MATCH -- every probe row emitted with a
+            // score it never earned. At d = 100 it silently contracts 96 columns, which is a
+            // different answer from the cublas and fused arms and makes the three-way
+            // comparison this region exists to support meaningless. The floor above does not
+            // cover it: minimumWidth() is a floor, and it is lowered by the very property that
+            // exists to measure widths below it.
+            LOG.info(
+                    "declining the nearest-neighbour region: the tiled contraction blocks by"
+                            + " {} and would drop the {} columns past the last whole tile of"
+                            + " {}",
+                    org.apache.flink.table.gpu.operator.DeviceSimilarity.TILE,
+                    spec.width() % org.apache.flink.table.gpu.operator.DeviceSimilarity.TILE,
+                    spec.width());
+            return Optional.empty();
+        }
         LOG.info(
                 "Accelerator reads both sides and scores every pair: {} columns, FP32,"
                         + " contraction by {}",

@@ -353,7 +353,14 @@ public final class DeviceParquetGrokSource
                 return;
             }
             final long capacity = new File(file).length() * CHARS_PER_FILE_BYTE;
-            if (plan == null || rows > sizedRows || capacity > sizedChars) {
+            // Rebuilt whenever either differs, not merely when it grows. The row count is
+            // captured as a scalar when the task graph is built -- readParquetStrings and
+            // containsRe are both handed (long) rows -- and a captured scalar cannot change
+            // between executions, which is exactly why the path travels in a mutable
+            // StringBuilder instead. Refreshing dims is not enough. The five sibling readers
+            // all rebuild on planRows != rows; this one grew only, so part-00001 at 900,000
+            // rows was read as though it still had part-00000's 1,000,000.
+            if (plan == null || rows != sizedRows || capacity != sizedChars) {
                 close();
                 build(rows, capacity);
             }
@@ -372,6 +379,25 @@ public final class DeviceParquetGrokSource
         }
 
         private void build(int rows, long capacity) {
+            if (capacity > Integer.MAX_VALUE) {
+                // The allocation below narrows to int while readParquetStrings and containsRe
+                // are handed the long, so past this point the buffer and the capacity cuDF
+                // bounds-checks against disagree by the truncation: between 256 and 512 MiB
+                // of file the cast goes negative and the allocation dies without explanation,
+                // and above that it wraps positive and cuDF copies out past the end of a far
+                // smaller buffer. Refused here, where the file that caused it can be named.
+                throw new IllegalStateException(
+                        "the string region cannot stage "
+                                + capacity
+                                + " characters, past the "
+                                + Integer.MAX_VALUE
+                                + " a device array can address. Split the input into smaller"
+                                + " part files; at "
+                                + CHARS_PER_FILE_BYTE
+                                + " characters a file byte, a part file of "
+                                + (Integer.MAX_VALUE / CHARS_PER_FILE_BYTE)
+                                + " bytes is the most this reads.");
+            }
             sizedRows = rows;
             sizedChars = capacity;
             pathHolder = new StringBuilder(256);

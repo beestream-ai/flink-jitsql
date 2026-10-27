@@ -348,8 +348,16 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
     private void sortOnHost() {
         // TimSort, so stable, which ORDER BY requires over equal keys.
         onHost.sort(Comparator.comparingInt(row -> row.getInt(spec.sortField())));
-        for (RowData row : onHost) {
-            output.collect(outElement.replace(row));
+        // The bound applies here as much as on the device path, which clamps to spec.limit()
+        // before draining. Without it a top-N that degrades emits the whole partition: the catch
+        // around the device work is deliberately broad, and the fallback is advertised as the
+        // survivable path, so any device hiccup turned ORDER BY k LIMIT 10 over a million rows
+        // into a million rows -- logged at WARN, with the query reporting success. The sort above
+        // is stable and ascending, so the first emit rows are the right ones. NO_LIMIT is
+        // Long.MAX_VALUE, so an unbounded sort still emits everything.
+        final int emit = (int) Math.min(onHost.size(), spec.limit());
+        for (int i = 0; i < emit; i++) {
+            output.collect(outElement.replace(onHost.get(i)));
         }
         onHost.clear();
     }

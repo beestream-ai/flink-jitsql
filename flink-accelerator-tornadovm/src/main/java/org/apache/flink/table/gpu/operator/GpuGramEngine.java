@@ -71,6 +71,15 @@ import java.lang.reflect.Method;
  */
 public final class GpuGramEngine implements AutoCloseable {
 
+    /**
+     * Whether to collect per-stage device timings, which costs every plan in this JVM.
+     *
+     * <p>A measurement switch rather than a query option, and read once: see where it is used for
+     * why it cannot be left on in a cluster.
+     */
+    private static final boolean PROFILE_STAGES =
+            Boolean.getBoolean("flink.accelerator.gram.profile");
+
     private static final org.slf4j.Logger LOG =
             org.slf4j.LoggerFactory.getLogger(GpuGramEngine.class);
 
@@ -225,7 +234,21 @@ public final class GpuGramEngine implements AutoCloseable {
         target.withGridScheduler(scheduler);
         // SILENT collects the per-stage timings without printing them. Without it the profiler
         // result is empty and the region can report only a device total.
-        target.withProfiler(uk.ac.manchester.tornado.api.enums.ProfilerMode.SILENT);
+        //
+        // Opt-in, because withProfiler is not plan-local. TornadoExecutionPlan records the mode on
+        // its own frame, but every execute() calls checkProfilerOn, which calls enableProfiler,
+        // which sets the JVM-wide statics TornadoOptions.TORNADO_PROFILER and, for SILENT,
+        // TORNADO_PROFILER_LOG. In a TaskManager that reaches well past this region: the log
+        // accumulates a JSON blob per batch per graph and is never cleared, every other
+        // accelerated region in the JVM starts taking the profiling path and its extra
+        // synchronisation -- perturbing the timings those regions report -- and a concurrent
+        // non-profiled plan calls disableProfiler, flipping the flag back mid-flight so this
+        // region's own copyIn/kernel/copyOut can come back as zero. Nothing ever calls
+        // withoutProfiler, so the flags also outlive the task. The sweeps that want the breakdown
+        // set the property; a cluster does not.
+        if (PROFILE_STAGES) {
+            target.withProfiler(uk.ac.manchester.tornado.api.enums.ProfilerMode.SILENT);
+        }
         return worker;
     }
 

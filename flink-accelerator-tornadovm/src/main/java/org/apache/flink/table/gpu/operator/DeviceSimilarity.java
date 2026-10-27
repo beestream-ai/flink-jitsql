@@ -84,6 +84,16 @@ public final class DeviceSimilarity {
      * This is the kernel cuBLAS is measured against, and it is a real one — at {@code d = 32} it is
      * within a factor of two of the library, and the gap only opens as {@code d} grows.
      */
+    /**
+     * The tile edge {@link #scoreTiled} blocks on, which the host has to agree with.
+     *
+     * <p>A compile-time constant, so the kernel below reads a literal exactly as it did when the
+     * value was written inline. It is public because the caller has two things to get right from
+     * it: the local work size of the 2D grid, and the refusal of a width this kernel would contract
+     * only part of.
+     */
+    public static final int TILE = 16;
+
     public static void scoreTiled(
             KernelContext ctx,
             FloatArray probe,
@@ -92,7 +102,7 @@ public final class DeviceSimilarity {
             int nQ,
             int nB,
             int d) {
-        final int ts = 16;
+        final int ts = TILE;
         final int localQ = ctx.localIdx;
         final int localB = ctx.localIdy;
         final int q = ts * ctx.groupIdx + localQ;
@@ -101,19 +111,28 @@ public final class DeviceSimilarity {
         final float[] pSub = ctx.allocateFloatLocalArray(ts * ts);
         final float[] bSub = ctx.allocateFloatLocalArray(ts * ts);
 
+        // The caller sizes the grid as nQ x nB and the local work as TILE x TILE, so the grid
+        // is rounded up to the tile and the blocks on the edge hold threads with no pair to
+        // score. They still have to reach both barriers -- a barrier a group enters unevenly
+        // is undefined -- so they load a zero rather than returning early, and the store at
+        // the end is what is guarded. Without this a 1,000 x 1,000 scoring runs on a grid of
+        // 1,008 x 1,008 and writes past the end of the score matrix.
+        final boolean inRange = q < nQ && b < nB;
         float acc = 0.0f;
         final int tiles = d / ts;
         for (int t = 0; t < tiles; t++) {
             // Column-major: column (ts*t + localB) of the probe, row q.
-            pSub[localB * ts + localQ] = probe.get((ts * t + localB) * nQ + q);
-            bSub[localQ * ts + localB] = build.get((ts * t + localQ) * nB + b);
+            pSub[localB * ts + localQ] = q < nQ ? probe.get((ts * t + localB) * nQ + q) : 0.0f;
+            bSub[localQ * ts + localB] = b < nB ? build.get((ts * t + localQ) * nB + b) : 0.0f;
             ctx.localBarrier();
             for (int k = 0; k < ts; k++) {
                 acc += pSub[k * ts + localQ] * bSub[k * ts + localB];
             }
             ctx.localBarrier();
         }
-        scores.set(b * nQ + q, acc);
+        if (inRange) {
+            scores.set(b * nQ + q, acc);
+        }
     }
 
     /**
