@@ -108,13 +108,7 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
             int[] fields = spec.kernel().inputFieldIndexes();
             GpuValueType[] types = spec.kernel().inputTypes();
             for (int c = 0; c < fields.length; c++) {
-                gathers[c] =
-                        RowGather.forColumn(
-                                row,
-                                fields[c],
-                                types[c],
-                                engine.inputColumn(c),
-                                engine.inputSegment(c));
+                gathers[c] = RowGather.forColumn(row, fields[c], types[c], engine.inputColumn(c));
             }
         }
         // No validity branch, and none is missing: the provider declines an aggregate whose kernel
@@ -148,16 +142,8 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
         // of the chain.
         buffered = 0;
 
-        // As in GpuCalcOperator: a columnar gather holds a run until it is told to write it, so
-        // the copying is here and timing it separately from the per-row accept would split one
-        // segment across two.
-        long gatherFlush = profile ? System.nanoTime() : 0L;
-        for (RowGather g : gathers) {
-            if (g != null) {
-                g.flush();
-            }
-        }
-        long gather = profile ? gatherNanos + (System.nanoTime() - gatherFlush) : 0L;
+        // Every gather writes as it goes, so the staging buffers already hold the batch.
+        long gather = gatherNanos;
         gatherNanos = 0;
 
         GeneratedKernelEngine.Execution execution = engine.execute(count);
@@ -176,9 +162,8 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
      * What each staged column's gather actually did, once the batches have run.
      *
      * <p>Worth reporting rather than inferring: which tier applies is decided from the first record
-     * seen, so it is a property of what the plan put upstream and not of anything in the plan, and
-     * the bulk tier can silently degrade to per-row access for a column that turns out to be
-     * dictionary-encoded or nullable. A correct result says nothing about which of those happened.
+     * seen, so it is a property of what the plan put upstream and not of anything in the plan. A
+     * correct result says nothing about which tier produced it.
      */
     public String[] gatherTiers() {
         if (gathers == null) {

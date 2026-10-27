@@ -23,10 +23,6 @@ import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.table.data.columnar.ColumnarRowData;
 import org.apache.flink.table.gpu.codegen.GpuValueType;
 
-import javax.annotation.Nullable;
-
-import java.lang.foreign.MemorySegment;
-
 /**
  * Copies one column out of a stream of {@link RowData} into a packed, column-major staging buffer.
  *
@@ -49,36 +45,24 @@ import java.lang.foreign.MemorySegment;
 public interface RowGather {
 
     /**
-     * The property that turns the bulk columnar path off, for measuring what it is worth.
+     * Appends {@code row}'s value for the configured column at {@code position}.
      *
-     * <p>A/B-ing it any other way means changing the source format, and that moves the floor as
-     * well as the staging: reading Parquet is itself several times cheaper than reading CSV, so a
-     * format comparison cannot say which of the two paid. This switch holds everything else still.
+     * <p>Every gather writes the value before returning. A deferred tier existed here until
+     * 2026-10-27 -- it held a run's bounds and issued one {@code MemorySegment.copy} per run out of
+     * a {@code VectorizedColumnBatch} -- and it was removed because the deferral could not be made
+     * correct. A vectorized reader resets and refills the same vectors for each batch, so a pending
+     * run stops pointing at its own values the moment the reader moves on; the run had to be
+     * flushed at the batch's last row, and a gather only sees the rows that reach it. A filter-only
+     * Calc upstream drops that row, and the copy then came out of a refilled vector as plausible,
+     * in-range, wrong numbers. No signal rescues it: the operator does not see the boundary either,
+     * and by the time the next row arrives the refill has happened.
      *
-     * <p>Deployment-level, like every other property here. Nothing at query level changes.
+     * <p>It was worth about 3% to give up. §T-staging A/B'd it with the format held still: 659 ms
+     * against 682 ms, ranges 639-713 and 635-902, and the operator's own breakdown identical to the
+     * tenth of a millisecond either way. The conclusion recorded there is that per-row accessor
+     * cost is not where staging time goes.
      */
-    String BULK_COLUMNAR_PROPERTY = "flink.accelerator.tornadovm.bulkColumnar";
-
-    boolean BULK_COLUMNAR = !"false".equals(System.getProperty(BULK_COLUMNAR_PROPERTY));
-
-    /** Appends {@code row}'s value for the configured column at {@code position}. */
     void accept(RowData row, int position);
-
-    /**
-     * Writes anything {@link #accept} deferred. Called before the batch is executed, and before the
-     * caller writes to the staging column by any other route.
-     *
-     * <p>Deferring is how a columnar source stops paying per-row staging: consecutive rows of one
-     * {@link org.apache.flink.table.data.columnar.vector.VectorizedColumnBatch} are already packed
-     * and column-major, so a run of them is one {@code MemorySegment.copy} rather than one accessor
-     * call per row. A gather that defers holds only the run's bounds, never the rows -- which is
-     * not a refinement but the whole constraint: Flink's vectorized readers hand out a single
-     * {@code ColumnarRowData} and move its row id, and the Table planner force-enables object reuse
-     * in batch mode, so a retained row is a reference to wherever the reader has got to since.
-     *
-     * <p>No-op for every gather that writes as it goes, which is all of them but one.
-     */
-    default void flush() {}
 
     /** Human-readable tier name, for the metrics report. */
     String tier();
@@ -92,43 +76,8 @@ public interface RowGather {
      * for negotiating layout.
      */
     static RowGather forColumn(RowData sample, int field, GpuValueType type, StagingColumn target) {
-        return forColumn(sample, field, type, target, null);
-    }
-
-    /**
-     * As {@link #forDouble(RowData, int, DoubleColumn)}, but given the staging buffer's segment a
-     * columnar input gets the bulk path instead of per-row access.
-     */
-    static RowGather forColumn(
-            RowData sample,
-            int field,
-            GpuValueType type,
-            StagingColumn target,
-            @Nullable MemorySegment targetSegment) {
         if (sample instanceof ColumnarRowData) {
-            // The bulk path copies a heap vector's backing array wholesale into a segment of the
-            // same element type, so it serves DOUBLE and FLOAT and has nothing to offer INT, which
-            // the kernel stages as a double. That column falls back to the per-row columnar tier.
-            //
-            // Measured reachable on 2026-09-26, which this comment previously denied: an 8M-row
-            // haversine GROUP BY over a Parquet source reported
-            // `tier1-columnar-bulk(100.0% bulk)` for both DOUBLE columns. The INT grouping key
-            // reported `tier1-columnar(per-row; not a DOUBLE column)` in the same run.
-            //
-            // FLOAT joined DOUBLE on 2026-10-01 (M9.17). It was the same gap as INT's and judged
-            // not to cost enough -- until the generator learned to emit float arithmetic, after
-            // which an FP32 pipeline is FLOAT in every column and would have taken the slow tier
-            // for all of them.
-            boolean bulk =
-                    BULK_COLUMNAR
-                            && targetSegment != null
-                            && (type == GpuValueType.DOUBLE || type == GpuValueType.FLOAT);
-            if (!bulk) {
-                return new ColumnarGather(field, type, target);
-            }
-            return type == GpuValueType.DOUBLE
-                    ? new BulkColumnarDoubleGather(field, target, targetSegment)
-                    : new BulkColumnarFloatGather(field, target, targetSegment);
+            return new ColumnarGather(field, type, target);
         }
         if (sample instanceof BinaryRowData) {
             return new BinaryGather(field, type, target);

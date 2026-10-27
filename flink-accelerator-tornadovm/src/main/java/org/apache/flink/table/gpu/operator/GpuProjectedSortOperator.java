@@ -138,13 +138,7 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
             int[] fields = spec.kernel().inputFieldIndexes();
             GpuValueType[] types = spec.kernel().inputTypes();
             for (int c = 0; c < fields.length; c++) {
-                gathers[c] =
-                        RowGather.forColumn(
-                                row,
-                                fields[c],
-                                types[c],
-                                engine.inputColumn(c),
-                                engine.inputSegment(c));
+                gathers[c] = RowGather.forColumn(row, fields[c], types[c], engine.inputColumn(c));
             }
         }
         if (buffered == capacity) {
@@ -163,11 +157,6 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
     public void endInput() throws Exception {
         if (buffered == 0) {
             return;
-        }
-        for (RowGather g : gathers) {
-            if (g != null) {
-                g.flush();
-            }
         }
         final int count = buffered;
         buffered = 0;

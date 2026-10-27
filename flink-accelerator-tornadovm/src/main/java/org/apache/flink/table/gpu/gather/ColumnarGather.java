@@ -23,7 +23,12 @@ import org.apache.flink.table.data.columnar.ColumnarRowData;
 import org.apache.flink.table.gpu.codegen.GpuValueType;
 
 /**
- * Vectorized batches, read one row at a time; the bulk path is {@link BulkColumnarDoubleGather}.
+ * Vectorized batches, read one row at a time.
+ *
+ * <p>The only tier for a columnar source since 2026-10-27. A deferred sibling copied runs of rows
+ * with one {@code MemorySegment.copy} and was removed: the run had to be issued before the reader
+ * refilled its vectors, and a gather sees only the rows that survive the operators above it. See
+ * {@link RowGather#accept} for what that cost and what it bought.
  *
  * <p>The accessor is chosen by the column's declared type. Reading a four-byte field with {@code
  * getDouble} does not fail, it returns eight bytes of whatever is there, so this switch is the

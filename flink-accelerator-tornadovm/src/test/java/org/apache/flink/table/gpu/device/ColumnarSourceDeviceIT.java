@@ -58,12 +58,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * M5.1 — a vectorized batch staged by the column, all the way onto the device.
  *
- * <p>{@link org.apache.flink.table.gpu.gather.BulkColumnarGatherTest} covers the copy itself on the
- * host. What this adds is the rest of the path: that the values the kernel reads are the ones the
- * batch held, that a run spanning several source batches lands in the right places, and that a
- * column the bulk path refuses still produces the right answer. A staging bug here is silent — the
- * kernel computes whatever is in the buffer — so it has to be asserted against a device, not
- * against the staging buffer.
+ * <p>What this covers is the whole path: that the values the kernel reads are the ones the batch
+ * held, and that rows spanning several source batches land in the right places. A staging bug here
+ * is silent — the kernel computes whatever is in the buffer — so it has to be asserted against a
+ * device, not against the staging buffer.
  *
  * <p>The rows are driven the way a reader drives them: one {@link ColumnarRowData} per source
  * batch, moved by {@code setRowId}. Tests that make a row object per value pass against staging

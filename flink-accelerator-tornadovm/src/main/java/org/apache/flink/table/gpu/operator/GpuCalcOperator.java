@@ -154,12 +154,7 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
                 GpuValueType[] types = spec.kernel().inputTypes();
                 for (int c = 0; c < fields.length; c++) {
                     gathers[c] =
-                            RowGather.forColumn(
-                                    row,
-                                    fields[c],
-                                    types[c],
-                                    engine.inputColumn(c),
-                                    engine.inputSegment(c));
+                            RowGather.forColumn(row, fields[c], types[c], engine.inputColumn(c));
                 }
             }
         }
@@ -171,10 +166,6 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
             int[] fields = spec.kernel().inputFieldIndexes();
             for (int c = 0; c < fields.length; c++) {
                 if (row.isNullAt(fields[c])) {
-                    // Before writing the column by hand: a gather that is holding a run would
-                    // otherwise copy over this slot when it flushes, turning the benign value
-                    // below back into whatever the source had there.
-                    gathers[c].flush();
                     engine.setInputNull(c, buffered);
                     // The gather still writes a value, and it has to be a benign one: the kernel
                     // computes every row whatever its validity -- branching to skip would cost
@@ -220,18 +211,9 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
         // self-referential plan could re-enter this operator.
         buffered = 0;
 
-        // A columnar gather stages a run of rows as one copy and holds it until told to; nothing
-        // is in the staging buffer for those rows until this returns. By design that makes this
-        // where the copying happens and the per-row accept above mostly bookkeeping, so timing
-        // one without the other would attribute the gather to the wrong side of the batch. Which
-        // of the two actually dominates is a question for the profiler, not an assumption here.
-        long gatherFlush = profile ? System.nanoTime() : 0L;
-        for (RowGather g : gathers) {
-            if (g != null) {
-                g.flush();
-            }
-        }
-        long gather = profile ? gatherNanos + (System.nanoTime() - gatherFlush) : 0L;
+        // Every gather writes as it goes, so by here the staging buffers already hold the batch
+        // and the whole of what gather cost is in gatherNanos.
+        long gather = gatherNanos;
         gatherNanos = 0;
 
         GeneratedKernelEngine.Execution execution = engine.execute(count);
@@ -296,9 +278,8 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
      * What each staged column's gather actually did, once the batches have run.
      *
      * <p>Worth reporting rather than inferring: which tier applies is decided from the first record
-     * seen, so it is a property of what the plan put upstream and not of anything in the plan, and
-     * the bulk tier can silently degrade to per-row access for a column that turns out to be
-     * dictionary-encoded or nullable. A correct result says nothing about which of those happened.
+     * seen, so it is a property of what the plan put upstream and not of anything in the plan. A
+     * correct result says nothing about which tier produced it.
      */
     public String[] gatherTiers() {
         if (block != null) {

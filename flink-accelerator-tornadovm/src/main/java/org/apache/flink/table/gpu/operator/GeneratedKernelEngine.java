@@ -803,11 +803,6 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         return GeneratedKernel.writerFor(inputs[column]);
     }
 
-    /** Off-heap buffer for one staged input column, for gathers that can bulk-copy into it. */
-    public java.lang.foreign.MemorySegment inputSegment(int column) {
-        return GeneratedKernel.segmentOf(inputs[column]);
-    }
-
     /**
      * One computed value, boxed as the row type declares it.
      *
