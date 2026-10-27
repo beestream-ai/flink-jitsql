@@ -204,18 +204,6 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         // ahead of the drift analysis rather than after it -- the point is that the rewritten form
         // is no longer drift-prone. See ExactPowers.
         AccelNode subtree = ExactPowers.rewrite(originalSubtree);
-        if (subtree instanceof AccelAggregate) {
-            return acceptAggregate((AccelAggregate) subtree, work);
-        }
-        if (subtree instanceof AccelSort) {
-            return acceptSort((AccelSort) subtree, work);
-        }
-        if (subtree instanceof AccelJoin) {
-            return acceptJoin((AccelJoin) subtree, work);
-        }
-        if (subtree instanceof AccelOverAggregate) {
-            return acceptOverAggregate((AccelOverAggregate) subtree, work);
-        }
         if (work.totalOpsPerRow() > MAX_OPS_PER_ROW) {
             LOG.debug(
                     "declining: {} operations a row exceeds the ceiling of {}",
@@ -260,6 +248,19 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
             LOG.debug("declining: {}", decimal);
             return Optional.empty();
         }
+        // Dispatched after the three checks above, not before them. Each of those walks the
+        // whole subtree and each applies to any shape, but the four specialised paths below
+        // return straight out of this method -- acceptAggregate and acceptSort hand their fused
+        // projection to AccelKernelGenerator themselves rather than routing it back through
+        // here -- so while the dispatch came first, a Calc fused beneath a Sort or an Aggregate
+        // reached none of them. Lines above are the only call sites of either refusal.
+        //
+        // What that admitted: SELECT k, CAST(CAST(v AS DECIMAL(10,2)) + w AS DOUBLE) FROM t
+        // ORDER BY k LIMIT 100 was refused as a bare Calc, because DecimalCoercion exists for
+        // the 24-versus-23 row disagreement a non-literal DECIMAL operand produces, and
+        // admitted once the same Calc was fused under the Sort. The ops ceiling was bypassed
+        // the same way, and its own comment describes the failure it guards against: a batch
+        // that reported complete having computed nothing.
         Optional<GpuKernelSource> kernel =
                 AccelKernelGenerator.generate(subtree, Integer.toHexString(subtree.hashCode()));
         if (!kernel.isPresent()) {
