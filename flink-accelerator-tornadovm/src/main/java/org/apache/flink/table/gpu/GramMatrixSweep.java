@@ -66,6 +66,27 @@ import java.util.Random;
  * exactly where a covariance computation loses digits, so that number is part of the result, not a
  * footnote to it.
  *
+ * <h2>What the timed region is, and what it is not</h2>
+ *
+ * <p>It is one {@code plan.execute()}: the upload of the table and the column means, the centring
+ * kernel, the contraction, and the download of the {@code d x d} result. <b>The upload is in the
+ * number</b>, and at the default width it is the larger part of it -- the table is {@code rows x d}
+ * floats against a result of {@code d x d}. That is on purpose and the ratio is still the answer to
+ * the question asked here, which is what a hybrid region costs an operator that is fed from the
+ * host. Both arms pay the same transfer, so it suppresses the visible speedup rather than inventing
+ * one; the {@code moved} column says how much of the time has nowhere else to go.
+ *
+ * <p>Outside it: the column means, which are {@code d} host reductions over {@code N} done once,
+ * and the restore of the input described below.
+ *
+ * <p>The transfer cannot simply be made resident to take it out. {@link #centre} subtracts in
+ * place, so the second execution would centre an already-centred table and the third would centre
+ * that -- a different matrix each run, not a drifting one. A resident arm is possible and would be
+ * worth having: upload the table and the means once and centre out of place into a work buffer,
+ * which costs one more table-sized device allocation and the same read and write the in-place
+ * kernel already does. It answers a different question, though -- what the contraction costs when
+ * the data is already on the device -- so it belongs beside this number rather than instead of it.
+ *
  * <p>Run with TornadoVM's argfile, as a plain Java main:
  *
  * <pre>{@code
@@ -86,10 +107,14 @@ public final class GramMatrixSweep {
     public static void main(String[] args) {
         int rows = args.length > 0 ? Integer.parseInt(args[0]) : 262_144;
 
-        System.out.printf("rows=%,d  (batch size of the offload operator)%n%n", rows);
+        System.out.printf("rows=%,d  (batch size of the offload operator)%n", rows);
+        System.out.println(
+                "times are one execute(): upload + centre + contract + download of d x d.");
         System.out.printf(
-                "%5s %12s %12s %12s %10s %12s %12s%n",
-                "d", "intensity", "generated", "cublas", "speedup", "gen err", "blas err");
+                "host column means are outside them; moved is what each execution transfers.%n%n");
+        System.out.printf(
+                "%5s %12s %12s %12s %10s %10s %12s %12s%n",
+                "d", "intensity", "generated", "cublas", "speedup", "moved", "gen err", "blas err");
 
         for (int d : WIDTHS) {
             float[] host = randomColumnMajor(rows, d);
@@ -98,13 +123,22 @@ public final class GramMatrixSweep {
             Result generated = time(rows, d, host, false);
             Result library = time(rows, d, host, true);
 
+            // Exactly what crosses the bus per execution: the table and the means up, the
+            // result down. Reported rather than timed separately because it is a count, not an
+            // estimate, and it is what says how much of the time above is interconnect.
+            final double movedMiB =
+                    ((long) rows * d * Float.BYTES
+                                    + (long) d * Float.BYTES
+                                    + (long) d * d * Float.BYTES)
+                            / 1048576.0;
             System.out.printf(
-                    "%5d %10.1f/B %10.2f ms %10.2f ms %9.2fx %12.2e %12.2e%n",
+                    "%5d %10.1f/B %10.2f ms %10.2f ms %9.2fx %7.1f MiB %12.2e %12.2e%n",
                     d,
                     d / 2.0,
                     generated.millis,
                     library.millis,
                     generated.millis / library.millis,
+                    movedMiB,
                     relativeError(generated.gram, reference),
                     relativeError(library.gram, reference));
         }
@@ -163,7 +197,9 @@ public final class GramMatrixSweep {
         double best = Double.MAX_VALUE;
         try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
             for (int i = 0; i < WARMUP + RUNS; i++) {
-                // Re-centring a centred buffer would drift, so the input is restored each run.
+                // The input is restored each run because centre() subtracts in place: without
+                // this the second execution centres an already-centred table. Outside the timer,
+                // and it is also why the upload cannot simply be made FIRST_EXECUTION.
                 for (int j = 0; j < rows * d; j++) {
                     data.set(j, host[j]);
                 }
