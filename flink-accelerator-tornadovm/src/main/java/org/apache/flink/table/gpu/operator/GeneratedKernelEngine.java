@@ -1125,17 +1125,31 @@ public final class GeneratedKernelEngine implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (plan != null) {
-            plan.close();
-            plan = null;
-        }
-        if (tailPlan != null) {
-            tailPlan.close();
-            tailPlan = null;
-        }
-        if (generated != null) {
-            generated.close();
-            generated = null;
+        // Chained through finally so the last close always runs. TornadoExecutionPlan.close()
+        // frees device buffers and can throw when the device has been lost or reset, which is
+        // exactly the state an operator is in when something upstream has torn the task down --
+        // and generated.close() is the only thing that decrements the handle count and drops the
+        // entry from the static kernel cache. Letting a throw skip it pinned that entry, and the
+        // KernelClassLoader holding the only copy of the kernel's bytes, for the life of the
+        // JVM: every later task generating the same source joins a cache entry whose count can
+        // never reach zero, which is the growing metaspace compileStandalone warns about.
+        try {
+            if (plan != null) {
+                plan.close();
+                plan = null;
+            }
+        } finally {
+            try {
+                if (tailPlan != null) {
+                    tailPlan.close();
+                    tailPlan = null;
+                }
+            } finally {
+                if (generated != null) {
+                    generated.close();
+                    generated = null;
+                }
+            }
         }
     }
 

@@ -133,19 +133,47 @@ public final class GpuGramEngine implements AutoCloseable {
     private long bytesOut;
 
     private final boolean kernelContraction;
+
+    /** Whether the planner required this region to round the way Flink's CPU does. */
+    private final boolean strictArithmetic;
+
     private IntArray dims;
 
     public GpuGramEngine(GpuKernelSource kernel, int features, int batchSize) {
-        this(kernel, features, batchSize, false);
+        this(kernel, features, batchSize, false, false);
     }
 
     public GpuGramEngine(
             GpuKernelSource kernel, int features, int batchSize, boolean kernelContraction) {
+        this(kernel, features, batchSize, kernelContraction, false);
+    }
+
+    public GpuGramEngine(
+            GpuKernelSource kernel,
+            int features,
+            int batchSize,
+            boolean kernelContraction,
+            boolean strictArithmetic) {
         this.kernel = kernel;
         this.features = features;
         this.batchSize = batchSize;
         this.kernelContraction = kernelContraction;
+        this.strictArithmetic = strictArithmetic;
         this.total = new double[features * features];
+    }
+
+    /**
+     * Wraps a graph in the plan that runs it, with the rounding the planner asked for.
+     *
+     * <p>Both graphs here carry a generated {@code features} task, so both are affected: an
+     * accelerator is otherwise free to fuse a multiply and an add into one rounding where Flink's
+     * CPU rounds twice, and a different answer to the same query is what strict arithmetic exists
+     * to prevent. It reaches the compiled kernel only; the cuBLAS contraction on the other arm
+     * rounds the way the library rounds either way.
+     */
+    private TornadoExecutionPlan planFor(TaskGraph graph) {
+        TornadoExecutionPlan built = new TornadoExecutionPlan(graph.snapshot());
+        return strictArithmetic ? built.withStrictFloatingPoint() : built;
     }
 
     public void open() throws Exception {
@@ -186,7 +214,7 @@ public final class GpuGramEngine implements AutoCloseable {
                             .task("contract", DeviceGram::contractDouble, packed, gram, dims)
                             .transferToHost(DataTransferMode.EVERY_EXECUTION, gram);
             // No scheduler here: gridOf() installs one over the top of whatever this sets.
-            return new TornadoExecutionPlan(kernelGraph.snapshot());
+            return planFor(kernelGraph);
         }
         LOG.info("Gram contraction by cuBLAS over {} features, {} rows", features, contraction);
         TaskGraph graph =
@@ -213,7 +241,7 @@ public final class GpuGramEngine implements AutoCloseable {
                                 gram,
                                 features)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, gram);
-        return new TornadoExecutionPlan(graph.snapshot());
+        return planFor(graph);
     }
 
     private WorkerGrid1D gridOf(TornadoExecutionPlan target, String name) {

@@ -835,7 +835,11 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                                                     "accept admitted a feature map the generator"
                                                             + " cannot express"));
             return SimpleOperatorFactory.of(
-                    new GpuGramOperator(gram, features, context.maxBatchSize()));
+                    new GpuGramOperator(
+                            gram,
+                            features,
+                            context.maxBatchSize(),
+                            ((TornadoPlan) plan).strictArithmetic));
         }
         GpuOverAggregateSpec over = ((TornadoPlan) plan).over;
         if (over != null) {
@@ -1461,9 +1465,12 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
      * org.apache.flink.table.gpu.codegen.GpuSimilarityJoinSpec#MIN_WIDTH} unless a measurement
      * overrides it.
      *
-     * <p>The floor is overridable only by a property the TaskManager JVM is started with: a query
-     * cannot reach it and the shipped default is unchanged. It exists so the floor can be measured
-     * through SQL, which it otherwise refuses outright.
+     * <p>The floor is overridable only by a property, not by anything a query can say, and the
+     * shipped default is unchanged. It exists so the floor can be measured through SQL, which it
+     * otherwise refuses outright. The property has to be set on the JVM that <em>plans</em> the
+     * query -- the client or the JobManager -- because this is read from region recognition, which
+     * runs during ExecNode translation. Setting it through {@code env.java.opts.taskmanager} does
+     * nothing, and the region is declined with no indication why.
      *
      * <p>Note the floor's original rationale -- that a fused kernel matches the GEMM below 64 -- is
      * false. Measured 2026-10-23 (X5), cuBLAS wins at every width from 8 to 64 and its margin

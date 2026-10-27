@@ -56,6 +56,9 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
     private final GpuKernelSource kernel;
     private final int batchSize;
 
+    /** Carried from the plan, because the engine builds the execution plan and this does not. */
+    private final boolean strictArithmetic;
+
     private transient GpuGramEngine engine;
     private transient int[] inputFields;
     private transient GpuValueType[] inputTypes;
@@ -63,16 +66,27 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
     private transient long executeNanos;
 
     public GpuGramOperator(GpuGramSpec spec, GpuKernelSource kernel, int batchSize) {
+        this(spec, kernel, batchSize, false);
+    }
+
+    public GpuGramOperator(
+            GpuGramSpec spec, GpuKernelSource kernel, int batchSize, boolean strictArithmetic) {
         this.spec = spec;
         this.kernel = kernel;
         this.batchSize = batchSize;
+        this.strictArithmetic = strictArithmetic;
     }
 
     @Override
     public void open() throws Exception {
         super.open();
         engine =
-                new GpuGramEngine(kernel, spec.featureCount(), batchSize, spec.kernelContraction());
+                new GpuGramEngine(
+                        kernel,
+                        spec.featureCount(),
+                        batchSize,
+                        spec.kernelContraction(),
+                        strictArithmetic);
         engine.open();
         inputFields = kernel.inputFieldIndexes();
         inputTypes = kernel.inputTypes();
@@ -95,6 +109,14 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
     @Override
     public void endInput() throws Exception {
         flush();
+        if (engine.rowsSeen() == 0) {
+            // Nothing was accumulated, so there is nothing to contract. emit() would collect a
+            // row built from a total[] that was never written -- every sum 0.0 -- and the
+            // aggregate above would return 0.0 where Flink returns NULL, because its own local
+            // half emits no row at all for an empty input. GpuGroupedAggregateOperator gets
+            // this right by doing its emission inside flush(), which returns early.
+            return;
+        }
         emit();
     }
 

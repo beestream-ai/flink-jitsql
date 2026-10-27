@@ -218,7 +218,16 @@ final class StagedColumns {
             for (int f = 0; f < widths.length; f++) {
                 final int at = base + header + (f << 3);
                 if ((bits & (1 << f)) != 0) {
-                    // The null bit lives in the header word, and the slot stays zero.
+                    // The null bit lives in the header word, and the slot is written zero
+                    // rather than left alone. This method does not own the segment: its caller
+                    // keeps one and grows it, so a slot skipped here holds whatever the
+                    // previous use of that buffer left in it. The javadoc above is the reason
+                    // it matters -- BinaryRowData compares and hashes the fixed part as bytes,
+                    // so two logically equal rows with a null in this field would compare
+                    // unequal and hash to different partitions. Latent only while every drain
+                    // gets a freshly allocated segment, which is one chunked drain away from
+                    // being false.
+                    out.putLong(at, 0L);
                     out.putLong(base + ((f + HEADER_BITS) >>> 6) * 8, nullWord(out, base, f));
                     continue;
                 }
