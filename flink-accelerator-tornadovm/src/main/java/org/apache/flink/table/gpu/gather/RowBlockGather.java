@@ -54,6 +54,7 @@ public final class RowBlockGather {
 
     private final ByteBuffer block;
     private final int rowBytes;
+    private final int arity;
 
     private long bulkRows;
 
@@ -63,9 +64,10 @@ public final class RowBlockGather {
      *     again overruns the buffer by exactly its size on the last row of a batch.
      * @param slots eight-byte slots in one staged row, from {@link #slotsFor}
      */
-    public RowBlockGather(ByteBuffer block, int slots) {
+    public RowBlockGather(ByteBuffer block, int slots, int arity) {
         this.block = block.duplicate();
         this.rowBytes = slots * SLOT_BYTES;
+        this.arity = arity;
     }
 
     /**
@@ -98,8 +100,36 @@ public final class RowBlockGather {
                 && binary.getSizeInBytes() >= slotsFor(arity) * SLOT_BYTES;
     }
 
-    /** Copies this row's fixed-width part to {@code position} in the block. */
+    /**
+     * Copies this row's fixed-width part to {@code position} in the block.
+     *
+     * <p>Re-tests {@link #canCopy} on every row, which the operator above does not: it chooses this
+     * path from the first record it is handed and never looks again. The concrete {@code RowData} a
+     * source emits is not a plan-time property, and nothing promises it is a constant one -- a
+     * union, or a connector that switches representation on a row that needs more space, changes it
+     * mid-stream. Without this the cast below is unchecked and the copy reads {@code rowBytes} from
+     * a segment that may hold fewer, which is a wrong answer where it is not an obscure exception.
+     *
+     * <p>It is an {@code instanceof} and three integer comparisons against a copy of {@code slots *
+     * 8} bytes, on a path whose whole claim is 10.8 ns a row. That ratio has not been measured
+     * since the check was added, so if this path is ever the one being timed, time it again.
+     */
     public void accept(RowData row, int position) {
+        if (!canCopy(row, arity)) {
+            throw new IllegalStateException(
+                    "the row block was bound to a "
+                            + arity
+                            + "-field single-segment BinaryRowData from the first record of this"
+                            + " subtask, and row "
+                            + position
+                            + " of this batch is a "
+                            + row.getClass().getSimpleName()
+                            + " of arity "
+                            + row.getArity()
+                            + " that does not qualify. Re-run with"
+                            + " -Dflink.accelerator.tornadovm.blockStaging=false, which stages"
+                            + " column by column and does not care what the row is.");
+        }
         final BinaryRowData binary = (BinaryRowData) row;
         block.limit(block.capacity());
         block.position(position * rowBytes);

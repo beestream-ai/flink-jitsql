@@ -289,8 +289,7 @@ public final class DeviceParquetGroupSumSource
 
         /** Read and group one file, on the device, in one plan. */
         private void group(String file) throws Exception {
-            final long[] meta = Cudf.parquetMetadata(file);
-            final int rows = (int) meta[0];
+            final int rows = ParquetRowCount.of(file);
             if (rows <= 0) {
                 return;
             }

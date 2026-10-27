@@ -136,9 +136,13 @@ public final class ReferenceJoinEngine implements AutoCloseable {
         this.batchSize = batchSize;
         this.resident = resident;
         this.contraction = contraction;
-        this.refs = new FloatArray(refCount * dims);
-        this.queries = new FloatArray(batchSize * dims);
-        this.scores = new FloatArray(batchSize * refCount);
+        this.refs = new FloatArray(DeviceArraySize.elements("the reference table", refCount, dims));
+        this.queries = new FloatArray(DeviceArraySize.elements("the query batch", batchSize, dims));
+        // The product that reaches the ceiling first, and the one that wraps to exactly zero at
+        // 65,536 x 65,536 -- see DeviceArraySize. The scores kernel's @Parallel bound is this
+        // same product recomputed in int, so refusing it here is what keeps that loop honest.
+        this.scores =
+                new FloatArray(DeviceArraySize.elements("the score matrix", batchSize, refCount));
         this.bestScore = new FloatArray(batchSize);
         this.bestRef = new IntArray(batchSize);
     }

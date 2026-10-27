@@ -348,7 +348,7 @@ public final class DeviceParquetGrokSource
         }
 
         private void one(String file) throws Exception {
-            final int rows = (int) Cudf.parquetMetadata(file)[0];
+            final int rows = ParquetRowCount.of(file);
             if (rows <= 0) {
                 return;
             }

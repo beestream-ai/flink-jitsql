@@ -63,8 +63,15 @@ public final class GeneratedKernelSweep {
 
         System.out.printf("rows=%,d  batch=%,d%n%n", rows, batchSize);
         System.out.printf(
-                "%-7s %-9s %10s %10s %9s %10s %10s%n",
-                "terms", "weighted", "cpu_ms", "gpu_ms", "speedup", "kernel_ms", "compile_ms");
+                "%-7s %-9s %10s %10s %9s %10s %9s %9s%n",
+                "terms",
+                "weighted",
+                "cpu_ms",
+                "gpu_ms",
+                "speedup",
+                "kernel_ms",
+                "javac_ms",
+                "warmup_ms");
 
         for (int level = 0; level < LEVELS.length; level++) {
             int terms = LEVELS[level];
@@ -74,23 +81,38 @@ public final class GeneratedKernelSweep {
             GpuCalcSpec spec = spec(terms, batchSize);
             try (GeneratedKernelEngine engine = new GeneratedKernelEngine(spec, true)) {
                 engine.open();
-                double compileMs = (System.nanoTime() - compileStart) / 1e6;
+                // javac only. The device JIT has not happened yet: TornadoVM builds and compiles
+                // the task graph lazily inside the first execute(), which is the warmup below.
+                // Printed as one column called compile_ms, this said a few tens of milliseconds
+                // while the compilation that dominates it sat untimed in the next statement.
+                double javacMs = (System.nanoTime() - compileStart) / 1e6;
 
-                // One untimed batch so kernel compilation on the device is not in the numbers.
-                stage(engine, input, 0, Math.min(batchSize, rows));
-                engine.execute(batchSize);
+                // One batch outside the measurement, so device compilation is not in the numbers
+                // the table reports -- but timed, because leaving it untimed is what made the old
+                // compile_ms column a report on javac alone while the device JIT it was taken to
+                // include sat in the next statement. This is the first execute(), so it is that
+                // JIT plus one batch of work; gpu_ms says what a batch costs, which is what makes
+                // the two separable by eye rather than by assertion.
+                // count, not batchSize, for the reason given in run(): a short run would
+                // otherwise warm up over a batch it does not have.
+                final int warm = Math.min(batchSize, rows);
+                stage(engine, input, 0, warm);
+                long warmStart = System.nanoTime();
+                engine.execute(warm);
+                double warmupMs = (System.nanoTime() - warmStart) / 1e6;
 
                 double gpuMs = run(engine, input, rows, batchSize);
                 OffloadMetrics m = engine.metrics();
                 System.out.printf(
-                        "%-7d %-9d %10.0f %10.0f %8.2fx %10.1f %10.0f%n",
+                        "%-7d %-9d %10.0f %10.0f %8.2fx %10.1f %9.0f %9.0f%n",
                         terms,
                         WEIGHTS[level],
                         cpuMs,
                         gpuMs,
                         cpuMs / gpuMs,
                         m.getKernelNanos() / 1e6,
-                        compileMs);
+                        javacMs,
+                        warmupMs);
             }
         }
     }

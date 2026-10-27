@@ -410,7 +410,7 @@ public final class DeviceParquetSimilaritySource
 
         /** One probe file: read it, score it against the resident corpus, reduce, drain. */
         private void one(String file) throws Exception {
-            final int rows = (int) Cudf.parquetMetadata(file)[0];
+            final int rows = ParquetRowCount.of(file);
             if (rows <= 0) {
                 return;
             }
@@ -454,7 +454,7 @@ public final class DeviceParquetSimilaritySource
          * the plan, which runs once; everything after that consumes them where they already are.
          */
         private void buildCorpus() {
-            corpusRows = (int) Cudf.parquetMetadata(source.corpusPath)[0];
+            corpusRows = ParquetRowCount.of(source.corpusPath);
             final int corpusCells = Math.max(1, corpusRows);
             if ((long) corpusCells * d > Integer.MAX_VALUE) {
                 throw tooLargeToStage("the corpus", (long) corpusCells * d);

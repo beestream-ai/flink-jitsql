@@ -71,6 +71,9 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
     private transient StreamRecord<RowData> outElement;
     private transient int buffered;
 
+    /** Staging time for the batch being filled, under the profiler. See {@code GpuCalcOperator}. */
+    private transient long gatherNanos;
+
     public GpuGroupedAggregateOperator(
             GpuCalcSpec spec,
             GpuAggregateSpec aggregate,
@@ -117,8 +120,14 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
         // No validity branch, and none is missing: the provider declines an aggregate whose kernel
         // carries validity at all. A null key would become a group of its own on the device and a
         // null summand would poison one, and neither has an answer cuDF's group-by can give here.
+        long gatherStart = profile ? System.nanoTime() : 0L;
         for (RowGather g : gathers) {
             g.accept(row, buffered);
+        }
+        if (profile) {
+            // As in GpuCalcOperator, and for the same reason: the segment was a hard-coded zero
+            // and the shares were computed against a total that did not include it.
+            gatherNanos += System.nanoTime() - gatherStart;
         }
         if (++buffered == batchSize) {
             flush();
@@ -139,12 +148,17 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
         // of the chain.
         buffered = 0;
 
-        // As in GpuCalcOperator: a columnar gather holds a run until it is told to write it.
+        // As in GpuCalcOperator: a columnar gather holds a run until it is told to write it, so
+        // the copying is here and timing it separately from the per-row accept would split one
+        // segment across two.
+        long gatherFlush = profile ? System.nanoTime() : 0L;
         for (RowGather g : gathers) {
             if (g != null) {
                 g.flush();
             }
         }
+        long gather = profile ? gatherNanos + (System.nanoTime() - gatherFlush) : 0L;
+        gatherNanos = 0;
 
         GeneratedKernelEngine.Execution execution = engine.execute(count);
 
@@ -155,7 +169,7 @@ public class GpuGroupedAggregateOperator extends AbstractStreamOperator<RowData>
             outRow.setField(1, engine.groupSum(g));
             output.collect(outElement.replace(outRow));
         }
-        engine.recordBatch(count, 0, execution, groups, System.nanoTime() - drainStart);
+        engine.recordBatch(count, gather, execution, groups, System.nanoTime() - drainStart);
     }
 
     /**

@@ -317,8 +317,7 @@ public final class DeviceParquetTopNSource
                 int[] projectedFields,
                 ReaderOutput<RowData> out)
                 throws Exception {
-            final long[] meta = uk.ac.manchester.tornado.cudf.Cudf.parquetMetadata(file);
-            final int rows = (int) meta[0];
+            final int rows = ParquetRowCount.of(file);
             if (rows <= 0) {
                 // An empty part file has no top-N, and the graph below would be built over
                 // zero-length arrays and executed anyway -- readParquet with 0 rows,

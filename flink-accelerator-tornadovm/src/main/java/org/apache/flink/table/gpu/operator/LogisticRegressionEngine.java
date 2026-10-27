@@ -116,6 +116,8 @@ public final class LogisticRegressionEngine implements AutoCloseable {
     private TornadoExecutionPlan plan;
     private int staged;
     private double trainMillis;
+    private double firstPassMillis;
+    private int iterationsRun;
 
     public LogisticRegressionEngine(
             int rows, int features, float learningRate, String contraction) {
@@ -129,7 +131,7 @@ public final class LogisticRegressionEngine implements AutoCloseable {
                 partials[f] = new FloatArray(1);
             }
         }
-        this.x = new FloatArray(rows * features);
+        this.x = new FloatArray(DeviceArraySize.elements("the design matrix", rows, features));
         this.y = new FloatArray(rows);
         this.weights = new FloatArray(features);
         this.z = new FloatArray(rows);
@@ -384,6 +386,7 @@ public final class LogisticRegressionEngine implements AutoCloseable {
 
     /** Runs {@code iterations} passes. No data crosses the bus after the first. */
     public void train(int iterations) {
+        iterationsRun = iterations;
         long start = System.nanoTime();
         try {
             if ("reduce".equals(contraction)) {
@@ -394,6 +397,9 @@ public final class LogisticRegressionEngine implements AutoCloseable {
                     for (int f = 0; f < features; f++) {
                         weights.set(f, weights.get(f) - step * partials[f].get(0));
                     }
+                    if (i == 0) {
+                        firstPassMillis = (System.nanoTime() - start) / 1e6;
+                    }
                 }
                 trainMillis = (System.nanoTime() - start) / 1e6;
                 return;
@@ -401,6 +407,9 @@ public final class LogisticRegressionEngine implements AutoCloseable {
             TornadoExecutionResult result = null;
             for (int i = 0; i < iterations; i++) {
                 result = plan.execute();
+                if (i == 0) {
+                    firstPassMillis = (System.nanoTime() - start) / 1e6;
+                }
             }
             // UNDER_DEMAND, so the weights come back once here rather than after every pass.
             if (result != null) {
@@ -419,9 +428,43 @@ public final class LogisticRegressionEngine implements AutoCloseable {
      * benchmark reports; this exists only to explain an end-to-end number after the fact -- in
      * particular, to say whether two contraction choices tie because they are equally good or
      * because both are lost in the cost of reading the input.
+     *
+     * <p><b>Do not compare the two contraction arms on this.</b> There is no warmup, so the first
+     * pass carries the device JIT, and the arms do not have the same amount of it to carry: the
+     * reduce arm compiles two kernels and the library arm four. At a few iterations that difference
+     * is most of the gap, so the comparison this number exists to make is decided by kernel count
+     * rather than by the contraction. {@link #steadyPassMillis()} is the one to use.
      */
     public double trainMillis() {
         return trainMillis;
+    }
+
+    /**
+     * The first pass alone, which is the one carrying device compilation.
+     *
+     * <p>Timed rather than warmed away deliberately: a warmup pass here is a training iteration,
+     * and running one would change the weights {@code train(iterations)} returns. Measuring it
+     * instead leaves the method meaning exactly what it says and still lets the JIT be taken off
+     * the comparison.
+     */
+    public double firstPassMillis() {
+        return firstPassMillis;
+    }
+
+    /**
+     * The passes after the first, per pass -- what the contraction arms differ by.
+     *
+     * <p>Zero when fewer than two passes ran, because there is nothing to average and a figure made
+     * from the compiling pass alone is the thing this exists to avoid.
+     *
+     * <p>The library arm's one-off {@code transferToHost} of the weights falls inside {@link
+     * #trainMillis()} and outside {@link #firstPassMillis()}, so it is spread across the passes
+     * here. It is {@code features} floats against a pass over every row, which is below the noise
+     * on any shape this engine runs at, but it is the one thing in this number that is not a pass.
+     */
+    public double steadyPassMillis() {
+        final int settled = iterationsRun - 1;
+        return settled < 1 ? 0.0 : (trainMillis - firstPassMillis) / settled;
     }
 
     /**

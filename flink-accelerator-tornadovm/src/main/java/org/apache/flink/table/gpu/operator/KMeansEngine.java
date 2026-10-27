@@ -99,13 +99,13 @@ public final class KMeansEngine implements AutoCloseable {
         this.rows = rows;
         this.dims = dims;
         this.clusters = clusters;
-        this.values = new DoubleArray(rows * (dims + 1));
-        this.centroids = new DoubleArray(clusters * dims);
+        this.values = new DoubleArray(DeviceArraySize.elements("the value block", rows, dims + 1));
+        this.centroids = new DoubleArray(DeviceArraySize.elements("the centroids", clusters, dims));
         this.assignment = new IntArray(rows);
         // cuDF writes one row per group and cannot know the count in advance, so both output
         // buffers are sized for the worst case -- every row its own group -- as the binding asks.
         this.outKeys = new IntArray(rows);
-        this.outSums = new DoubleArray((dims + 1) * rows);
+        this.outSums = new DoubleArray(DeviceArraySize.elements("the group sums", dims + 1, rows));
         this.outGroups = new IntArray(1);
         for (int i = 0; i < rows; i++) {
             values.set(dims * rows + i, 1.0);

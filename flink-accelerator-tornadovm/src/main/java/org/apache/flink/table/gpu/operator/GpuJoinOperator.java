@@ -267,7 +267,10 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
         }
         dims.set(0, buildRows);
         buildProbePlan();
-        metrics.recordBatch(buildRows, 0, System.nanoTime() - start, 0L, 0L, null);
+        // Setup, not a batch. Recorded as a batch this put buildRows into rows_in with nothing
+        // emitted against them, so a join emitting one row per probe row -- 100% selective --
+        // printed 50%, and the ordering pass counted as gather time against batches it preceded.
+        metrics.recordSetup(buildRows, System.nanoTime() - start);
     }
 
     /**

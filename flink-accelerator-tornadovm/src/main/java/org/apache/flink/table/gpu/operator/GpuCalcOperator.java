@@ -73,6 +73,23 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
     private transient StreamRecord<RowData> outElement;
     private transient int buffered;
 
+    /**
+     * Host time spent staging the rows of the batch being filled, when {@link #profile} is on.
+     *
+     * <p>Reported as the gather segment, which was a hard-coded zero before. A zero is not a cheap
+     * gather: gathering happens inline in {@link #processElement} and was simply never timed, while
+     * {@code OffloadMetrics} went on dividing by a total that was missing it, so every other
+     * segment's share came out larger than it was. The breakdown exists to say which of four things
+     * to fix -- and "gather dominant means the input tier is wrong" was the one conclusion these
+     * numbers could never reach.
+     *
+     * <p>Timed only under the profiler, because this is two {@code System.nanoTime()} calls per row
+     * on the hottest path the operator has, and a plan that did not ask to be measured should not
+     * pay them. With the profiler off the segment stays zero and the report prints it as untimed
+     * rather than as nothing.
+     */
+    private transient long gatherNanos;
+
     public GpuCalcOperator(GpuCalcSpec spec, int batchSize, boolean profile) {
         this(spec, batchSize, profile, null);
     }
@@ -146,6 +163,7 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
                 }
             }
         }
+        long gatherStart = profile ? System.nanoTime() : 0L;
         if (engine.carriesValidity()) {
             // Cleared first, because the buffer is reused across batches and a bit left set from a
             // previous row would make a present value read as absent.
@@ -180,6 +198,9 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
                 buffer.accept(row, buffered);
             }
         }
+        if (profile) {
+            gatherNanos += System.nanoTime() - gatherStart;
+        }
         if (++buffered == batchSize) {
             flush();
         }
@@ -200,18 +221,24 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
         buffered = 0;
 
         // A columnar gather stages a run of rows as one copy and holds it until told to; nothing
-        // is in the staging buffer for those rows until this returns.
+        // is in the staging buffer for those rows until this returns. By design that makes this
+        // where the copying happens and the per-row accept above mostly bookkeeping, so timing
+        // one without the other would attribute the gather to the wrong side of the batch. Which
+        // of the two actually dominates is a question for the profiler, not an assumption here.
+        long gatherFlush = profile ? System.nanoTime() : 0L;
         for (RowGather g : gathers) {
             if (g != null) {
                 g.flush();
             }
         }
+        long gather = profile ? gatherNanos + (System.nanoTime() - gatherFlush) : 0L;
+        gatherNanos = 0;
 
         GeneratedKernelEngine.Execution execution = engine.execute(count);
 
         long drainStart = System.nanoTime();
         int emitted = engine.compactsOnDeviceNow() ? drainCompacted() : drainMasked(count);
-        engine.recordBatch(count, 0, execution, emitted, System.nanoTime() - drainStart);
+        engine.recordBatch(count, gather, execution, emitted, System.nanoTime() - drainStart);
     }
 
     /**
@@ -457,7 +484,6 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
         getMetricGroup().gauge("acceleratorDrainNanos", (Gauge<Long>) m::getDrainNanos);
     }
 
-    /** Metrics for the batches this operator has run so far; exposed for tests. */
     /**
      * Whether this subtask's filter compacted on the device rather than on the host.
      *
@@ -470,6 +496,7 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
         return engine != null && engine.compactsOnDeviceNow();
     }
 
+    /** Metrics for the batches this operator has run so far; exposed for tests. */
     public OffloadMetrics metrics() {
         return engine.metrics();
     }

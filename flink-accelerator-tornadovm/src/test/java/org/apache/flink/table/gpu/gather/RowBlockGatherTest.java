@@ -64,7 +64,7 @@ class RowBlockGatherTest {
         final int rows = 4;
         final int slots = RowBlockGather.slotsFor(ARITY);
         final ByteBuffer block = block(rows, slots);
-        final RowBlockGather gather = new RowBlockGather(block, slots);
+        final RowBlockGather gather = new RowBlockGather(block, slots, ARITY);
 
         for (int i = 0; i < rows; i++) {
             gather.accept(row(i + 0.5, i + 100.25), i);
@@ -88,7 +88,7 @@ class RowBlockGatherTest {
         final int rows = 64;
         final int slots = RowBlockGather.slotsFor(ARITY);
         final ByteBuffer block = block(rows, slots);
-        final RowBlockGather gather = new RowBlockGather(block, slots);
+        final RowBlockGather gather = new RowBlockGather(block, slots, ARITY);
 
         // Every position the engine will ever write, including the one at the very end. An offset
         // that is too large by any amount throws here rather than corrupting a neighbour.

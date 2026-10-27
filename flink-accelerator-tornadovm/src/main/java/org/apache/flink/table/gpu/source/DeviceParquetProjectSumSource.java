@@ -330,8 +330,7 @@ public final class DeviceParquetProjectSumSource
 
         /** Read, compute and reduce one file, on the device, in one plan. */
         private double one(String file) throws Exception {
-            final long[] meta = Cudf.parquetMetadata(file);
-            final int rows = (int) meta[0];
+            final int rows = ParquetRowCount.of(file);
             if (rows <= 0) {
                 return 0.0;
             }

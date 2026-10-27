@@ -173,6 +173,8 @@ public final class GeneratedKernelEngine implements AutoCloseable {
     private @Nullable DoubleArray rowBlock;
 
     /** Slots in one staged row, header included. Zero while the block path is not in use. */
+    private int blockArity;
+
     private int blockSlots;
 
     /** The slot each staged column occupies within a row, parallel to {@code inputs}. */
@@ -405,6 +407,7 @@ public final class GeneratedKernelEngine implements AutoCloseable {
             // no such mask, and a projection over nullable inputs is refused elsewhere anyway.
             return false;
         }
+        blockArity = sourceArity;
         blockSlots = RowBlockGather.slotsFor(sourceArity);
         columnSlots = new int[fields.length];
         for (int c = 0; c < fields.length; c++) {
@@ -419,7 +422,8 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         if (rowBlock == null) {
             return null;
         }
-        return new RowBlockGather(GeneratedKernel.segmentOf(rowBlock).asByteBuffer(), blockSlots);
+        return new RowBlockGather(
+                GeneratedKernel.segmentOf(rowBlock).asByteBuffer(), blockSlots, blockArity);
     }
 
     /** Builds the task graph, on first use, once the block decision is settled. */
