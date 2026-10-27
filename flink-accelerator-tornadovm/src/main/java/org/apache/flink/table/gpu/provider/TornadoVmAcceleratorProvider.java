@@ -317,6 +317,11 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                 : new int[0];
     }
 
+    /** Whether the device has a column for this output field at all: computed, or staged. */
+    private static boolean resolvable(GpuKernelSource kernel, GpuCalcSpec spec, int field) {
+        return spec.computedSlot(field) >= 0 || stages(kernel, spec, field);
+    }
+
     /** Whether the kernel stages the input column this output field is copied from. */
     private static boolean stages(GpuKernelSource kernel, GpuCalcSpec spec, int field) {
         final int source = spec.outputLayout()[field];
@@ -389,6 +394,25 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         }
         int keyField = keyOutputField;
         int valueField = call.inputField();
+        // Before anything asks for a type. fieldType() resolves a copied field through
+        // stagedColumn, which throws when the field is neither computed nor staged -- so the
+        // check below has to come first, and has to cover the value as well as the key. It
+        // covered only the key, and ran after fieldType had already been called on both:
+        // SELECT MOD(id, 1000), SUM(v) FROM t GROUP BY MOD(id, 1000) has a computed key, so
+        // keyInputFields is empty and v is read by no expression and never staged, and
+        // fieldType(valueField) raised IllegalStateException out of accept(). That is a
+        // programming error rather than a plan this cannot serve, and a provider that throws
+        // out of accept() violates the SPI and is caught only by a safety net meant for
+        // third-party code.
+        if (!resolvable(kernel.get(), probe, keyField)
+                || !resolvable(kernel.get(), probe, valueField)) {
+            LOG.info(
+                    "declining the aggregate: field {} or {} is neither computed nor staged,"
+                            + " so the device has no column for it",
+                    keyField,
+                    valueField);
+            return Optional.empty();
+        }
         if (probe.fieldType(keyField) != GpuValueType.INT
                 || probe.fieldType(valueField) != GpuValueType.DOUBLE) {
             LOG.info(
@@ -396,17 +420,6 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                             + "not {} and {}",
                     probe.fieldType(keyField),
                     probe.fieldType(valueField));
-            return Optional.empty();
-        }
-        // The engine reads the key column through stagedColumn, which throws when the field is
-        // neither computed nor staged. That is a programming error rather than a plan this cannot
-        // serve, so it is checked here and declined -- a provider that throws out of accept()
-        // violates the SPI and is caught only by a safety net meant for third-party code.
-        if (probe.computedSlot(keyField) < 0 && !stages(kernel.get(), probe, keyField)) {
-            LOG.info(
-                    "declining the aggregate: the grouping key (field {}) is neither computed nor"
-                            + " staged, so the device has no column to group by",
-                    keyField);
             return Optional.empty();
         }
         GpuAggregateSpec aggregate =
@@ -897,7 +910,11 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                             ((TornadoPlan) plan).strictArithmetic);
             return SimpleOperatorFactory.of(
                     new GpuGroupedAggregateOperator(
-                            spec, aggregate, context.maxBatchSize(), PROFILE, null));
+                            spec,
+                            aggregate,
+                            context.maxBatchSize(),
+                            PROFILE,
+                            context.providesOffHeap() ? context::allocateOffHeap : null));
         }
         GpuCalcSpec spec =
                 new GpuCalcSpec(
@@ -906,7 +923,18 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
                         context.outputType(),
                         context.maxBatchSize(),
                         ((TornadoPlan) plan).strictArithmetic);
-        return SimpleOperatorFactory.of(new GpuCalcOperator(spec, context.maxBatchSize(), PROFILE));
+        // Through the slot's allocator, as the sort, the projected sort, the join and the
+        // over-aggregate all are. Without it a Calc staged on the ordinary off-heap pool,
+        // invisible to the slot budget: N accelerated Calc subtasks in one TaskManager each
+        // allocated privately on top of a reservation that then sat idle. The Calc and the
+        // grouped aggregate are the two commonest accelerated shapes, so they were the two
+        // that wanted it most.
+        return SimpleOperatorFactory.of(
+                new GpuCalcOperator(
+                        spec,
+                        context.maxBatchSize(),
+                        PROFILE,
+                        context.providesOffHeap() ? context::allocateOffHeap : null));
     }
 
     @Override

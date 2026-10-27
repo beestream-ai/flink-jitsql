@@ -178,7 +178,13 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
 
         final long drainStart = System.nanoTime();
         final int fields = sort.rowType().getFieldCount();
-        for (int i = 0; i < count; i++) {
+        // The same bound the unfused sort applies. No planner path builds a bounded sort over a
+        // projection today -- buildSort uses the unbounded AccelSort constructor and buildTopN
+        // only builds over an AccelInput leaf -- so this is one planner change away from
+        // mattering rather than wrong now. It is written here because the spec carries the
+        // limit and the cost model already prices this node with emittedFraction().
+        final int emit = (int) Math.min(count, sort.limit());
+        for (int i = 0; i < emit; i++) {
             final int source = permutation[i];
             outWriter.reset();
             for (int f = 0; f < fields; f++) {
@@ -187,7 +193,7 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
             outWriter.complete();
             output.collect(outElement.replace(outRow));
         }
-        metrics.recordBatch(count, count, 0L, executeNanos, System.nanoTime() - drainStart, null);
+        metrics.recordBatch(count, emit, 0L, executeNanos, System.nanoTime() - drainStart, null);
     }
 
     /** One field of the projection's output, read at the position the ordering chose. */

@@ -220,8 +220,7 @@ public final class AccelKernelGenerator {
             if (!isDoubleResult(expression.outputType())) {
                 return Optional.empty();
             }
-            if (expression.outputType().getTypeRoot() == LogicalTypeRoot.FLOAT
-                    && !rendersAsFloat(expression)) {
+            if (floatNodeCannotRender(expression)) {
                 return Optional.empty();
             }
             Rendered rendered = render(expression, inputs, inputTypes);
@@ -1478,6 +1477,30 @@ public final class AccelKernelGenerator {
      * fail to compile at execute time, which is the worst moment to find out. Declining here makes
      * it a planning decision instead.
      */
+    /**
+     * Whether any node in this tree is typed {@code FLOAT} but would not be rendered as one.
+     *
+     * <p>The whole tree, not the root. renderClass declares a subexpression's local from that
+     * subexpression's own type, so a FLOAT node anywhere emits {@code final float tN = ...}; asking
+     * only about the root let {@code CAST(i AS FLOAT) * f + 0.0E0} through, whose root PLUS is
+     * DOUBLE while the TIMES beneath it is FLOAT. javac then rejected the generated class with
+     * "possible lossy conversion from double to float" -- on the TaskManager, at execute time,
+     * which is the failure this check exists to turn into a planning decision.
+     */
+    private static boolean floatNodeCannotRender(AccelExpression node) {
+        if (node.outputType().getTypeRoot() == LogicalTypeRoot.FLOAT && !rendersAsFloat(node)) {
+            return true;
+        }
+        if (node instanceof AccelCall) {
+            for (AccelExpression operand : ((AccelCall) node).operands()) {
+                if (floatNodeCannotRender(operand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private static boolean rendersAsFloat(AccelExpression node) {
         if (node.outputType().getTypeRoot() != LogicalTypeRoot.FLOAT) {
             return false;

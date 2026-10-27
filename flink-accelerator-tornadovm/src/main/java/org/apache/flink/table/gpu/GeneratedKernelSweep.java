@@ -106,7 +106,15 @@ public final class GeneratedKernelSweep {
             stage(engine, input, start, count);
             long gather = System.nanoTime() - t0;
 
-            GeneratedKernelEngine.Execution execution = engine.execute(batchSize);
+            // count, not batchSize. The last batch of a run is usually short, and evaluating a
+            // full batch over it computes the tail from whatever the previous batch left in the
+            // staging buffer -- work nothing reads, timed into the device total this method
+            // returns. Every other use of the batch here is already count: the drain loop below
+            // and the recordBatch that follows it. At the defaults the tail is about 4.9% of a
+            // run, and both sizes are argv parameters: GeneratedKernelSweep 300000 runs 524,288
+            // rows against a 300,000-row CPU baseline and understates the printed speedup by
+            // roughly 40%.
+            GeneratedKernelEngine.Execution execution = engine.execute(count);
 
             long d0 = System.nanoTime();
             int emitted = 0;
