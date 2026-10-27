@@ -223,6 +223,10 @@ public final class AccelKernelGenerator {
             if (floatNodeCannotRender(expression)) {
                 return Optional.empty();
             }
+            // False: the column's own value is narrowed on the way out, so the root may wrap.
+            if (integerSemanticsDiffer(expression, false)) {
+                return Optional.empty();
+            }
             Rendered rendered = render(expression, inputs, inputTypes);
             if (rendered == null) {
                 return Optional.empty();
@@ -265,6 +269,11 @@ public final class AccelKernelGenerator {
 
         String renderedCondition = null;
         if (condition != null) {
+            // True: a predicate reads its operands rather than narrowing them, so nothing under
+            // it may have wrapped.
+            if (integerSemanticsDiffer(condition, true)) {
+                return Optional.empty();
+            }
             Rendered rendered = render(condition, inputs, inputTypes);
             if (rendered == null) {
                 return Optional.empty();
@@ -503,7 +512,16 @@ public final class AccelKernelGenerator {
             String open =
                     outputType == GpuValueType.FLOAT
                             ? "(float) ("
-                            : outputType == GpuValueType.INT ? "(int) (" : "";
+                            // Through long, not straight to int. A double-to-int conversion in
+                            // Java saturates at Integer.MAX_VALUE; Flink's CPU evaluates INTEGER
+                            // arithmetic with Java int wraparound. SELECT i * 1000 at i =
+                            // 3000000 is -1294967296 on the CPU and was Integer.MAX_VALUE here.
+                            // Double-to-long is exact for every value this generator admits --
+                            // integerSemanticsDiffer holds them under 2^53 -- and long-to-int
+                            // keeps the low 32 bits, which is the wraparound itself. In range
+                            // the two spellings are identical, so this costs nothing where it
+                            // was already right.
+                            : outputType == GpuValueType.INT ? "(int) (long) (" : "";
             boolean narrow = !open.isEmpty();
             sb.append(INDENT)
                     .append("    out")
@@ -1487,6 +1505,231 @@ public final class AccelKernelGenerator {
      * "possible lossy conversion from double to float" -- on the TaskManager, at execute time,
      * which is the failure this check exists to turn into a planning decision.
      */
+    /** Largest magnitude an integer keeps exactly in a double. */
+    private static final long DOUBLE_EXACT_INTEGER = 1L << 53;
+
+    /** Whether this type is one SQL evaluates with wraparound rather than with saturation. */
+    private static boolean isExactInteger(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case TINYINT:
+            case SMALLINT:
+            case INTEGER:
+            case BIGINT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether this expression would mean something different here than it does on the CPU.
+     *
+     * <p>The kernel evaluates everything in double and narrows an {@code INTEGER} column once on
+     * the way out. Flink evaluates {@code INTEGER} arithmetic in {@code int}, which wraps at every
+     * step. Those two agree only under conditions, and this is the proof that they hold.
+     *
+     * <p><b>Why a single narrowing is usually enough.</b> {@code +}, {@code -} and {@code *} are a
+     * ring homomorphism onto {@code int}: reducing modulo 2^32 at the end gives what reducing at
+     * every step gives. So a projection built only from those does not need its intermediates
+     * wrapped, as long as the exact value is still exact in a double -- hence {@link
+     * #DOUBLE_EXACT_INTEGER} as the bound on every integral node. {@code i * 1000} passes; {@code i
+     * * j} over two full-range columns reaches 2^62 and does not.
+     *
+     * <p><b>Where it is not enough.</b> Integer division, {@code MOD}, a widening to {@code DOUBLE}
+     * and a comparison all read the operand's <em>wrapped</em> value, and wrapping is not something
+     * this kernel does mid-expression. Such an operand therefore has to be one that never wraps at
+     * all -- exact range inside {@code int} -- and {@code mustNotWrap} is how that requirement is
+     * carried down. {@code MOD(i * 1000, 1000)} is refused for exactly this: the CPU wraps {@code i
+     * * 1000} to -1294967296 and takes its remainder, giving -296, where the exact arithmetic here
+     * would give 0.
+     *
+     * <p><b>What this deliberately does not do</b> is narrow the vocabulary. {@code id - (id / g) *
+     * g} -- which is what Calcite lowers {@code MOD(id, g)} to, and what every grouping key in this
+     * project's benchmarks is -- passes: the division's operand is a bare column, the product is
+     * bounded by the division, and the difference stays far inside 2^53. A rule that merely
+     * demanded every intermediate fit an {@code int} would have refused it, and with it the grouped
+     * aggregate.
+     */
+    private static boolean integerSemanticsDiffer(AccelExpression node, boolean mustNotWrap) {
+        if (isExactInteger(node.outputType())) {
+            final long[] range = exactRange(node);
+            if (range == null
+                    || range[0] < -DOUBLE_EXACT_INTEGER
+                    || range[1] > DOUBLE_EXACT_INTEGER) {
+                return true;
+            }
+            if (mustNotWrap && (range[0] < Integer.MIN_VALUE || range[1] > Integer.MAX_VALUE)) {
+                return true;
+            }
+        }
+        if (node instanceof AccelCall) {
+            final AccelCall call = (AccelCall) node;
+            // Only a ring operation over integers may hand its operands on unwrapped; everything
+            // else reads the value itself and so needs one that never wrapped.
+            final boolean ring =
+                    isExactInteger(node.outputType())
+                            && (call.function() == AccelFunction.PLUS
+                                    || call.function() == AccelFunction.MINUS
+                                    || call.function() == AccelFunction.TIMES
+                                    || call.function() == AccelFunction.NEGATE);
+            for (AccelExpression operand : call.operands()) {
+                if (integerSemanticsDiffer(operand, !ring)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The range of exact mathematical values this integral expression can take, or null if it
+     * cannot be bounded.
+     *
+     * <p>Interval arithmetic, in {@code long}, over the <em>unwrapped</em> value -- which is the
+     * point: it is what says whether wrapping could have happened. Anything it cannot bound is null
+     * and is refused by the caller, so every unhandled function is conservative by default.
+     */
+    private static @Nullable long[] exactRange(AccelExpression node) {
+        if (node instanceof AccelInputRef) {
+            return declaredRange(node.outputType());
+        }
+        if (node instanceof AccelLiteral) {
+            final Object value = ((AccelLiteral) node).value();
+            if (!(value instanceof Number)) {
+                return null;
+            }
+            // By value rather than by declared type. A divisor written 1000 can reach here as a
+            // DOUBLE literal -- the IR carries whatever Calcite typed it -- and 1000.0 bounds the
+            // division exactly as 1000 does. What matters is that the number is a whole one and
+            // small enough to be itself in a long.
+            final double exact = ((Number) value).doubleValue();
+            if (exact != Math.rint(exact) || Math.abs(exact) > DOUBLE_EXACT_INTEGER) {
+                return null;
+            }
+            final long v = (long) exact;
+            return new long[] {v, v};
+        }
+        if (!(node instanceof AccelCall)) {
+            return null;
+        }
+        final AccelCall call = (AccelCall) node;
+        final List<AccelExpression> operands = call.operands();
+        final long[] a = operands.isEmpty() ? null : exactRange(operands.get(0));
+        final long[] b = operands.size() < 2 ? null : exactRange(operands.get(1));
+        switch (call.function()) {
+            case NEGATE:
+                return a == null ? null : span(-a[1], -a[0]);
+            case PLUS:
+                return a == null || b == null ? null : span(a[0] + b[0], a[1] + b[1]);
+            case MINUS:
+                return a == null || b == null ? null : span(a[0] - b[1], a[1] - b[0]);
+            case TIMES:
+                return product(a, b);
+            case INT_DIVIDE:
+                // Magnitude never grows, except that MIN_VALUE / -1 is one past MAX_VALUE, which
+                // the symmetric bound below covers rather than hides.
+                if (a == null || b == null || (b[0] <= 0 && b[1] >= 0)) {
+                    return null;
+                }
+                return span(-magnitude(a), magnitude(a));
+            case MOD:
+                // Java's remainder takes the sign of the dividend and is strictly smaller than
+                // the divisor in magnitude.
+                if (a == null || b == null || (b[0] <= 0 && b[1] >= 0)) {
+                    return null;
+                }
+                return span(-(magnitude(b) - 1), magnitude(b) - 1);
+            case ABS:
+                return a == null ? null : span(0, magnitude(a));
+            case LEAST:
+                return a == null || b == null
+                        ? null
+                        : span(Math.min(a[0], b[0]), Math.min(a[1], b[1]));
+            case GREATEST:
+                return a == null || b == null
+                        ? null
+                        : span(Math.max(a[0], b[0]), Math.max(a[1], b[1]));
+            case CAST:
+                // A widening keeps the value; a narrowing is the CPU's own conversion and is not
+                // modelled here, so it is bounded only when it cannot narrow anything.
+                if (a == null || !isExactInteger(node.outputType())) {
+                    return null;
+                }
+                final long[] target = declaredRange(node.outputType());
+                return target != null && a[0] >= target[0] && a[1] <= target[1] ? a : null;
+            default:
+                return null;
+        }
+    }
+
+    private static @Nullable long[] declaredRange(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case TINYINT:
+                return new long[] {Byte.MIN_VALUE, Byte.MAX_VALUE};
+            case SMALLINT:
+                return new long[] {Short.MIN_VALUE, Short.MAX_VALUE};
+            case INTEGER:
+                return new long[] {Integer.MIN_VALUE, Integer.MAX_VALUE};
+            case BIGINT:
+                return new long[] {Long.MIN_VALUE, Long.MAX_VALUE};
+            default:
+                return null;
+        }
+    }
+
+    /** Largest magnitude in the range, saturating rather than wrapping on MIN_VALUE. */
+    private static long magnitude(long[] range) {
+        final long lo = range[0] == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(range[0]);
+        final long hi = range[1] == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(range[1]);
+        return Math.max(lo, hi);
+    }
+
+    /** A range, or null where the arithmetic that built it left long behind. */
+    private static @Nullable long[] span(long lo, long hi) {
+        if (lo > hi || overshot(lo) || overshot(hi)) {
+            return null;
+        }
+        return new long[] {lo, hi};
+    }
+
+    /**
+     * Whether a bound is far enough out that it may itself have overflowed {@code long}.
+     *
+     * <p>Everything past 2^53 is refused anyway, so there is no need to be precise here -- only to
+     * be certain that a wrapped {@code long} is never mistaken for a small range.
+     */
+    private static boolean overshot(long bound) {
+        return bound < -(1L << 60) || bound > (1L << 60);
+    }
+
+    private static @Nullable long[] product(@Nullable long[] a, @Nullable long[] b) {
+        if (a == null || b == null) {
+            return null;
+        }
+        final long[] corners = {
+            multiply(a[0], b[0]), multiply(a[0], b[1]), multiply(a[1], b[0]), multiply(a[1], b[1])
+        };
+        long lo = Long.MAX_VALUE;
+        long hi = Long.MIN_VALUE;
+        for (long corner : corners) {
+            if (corner == Long.MIN_VALUE) {
+                return null;
+            }
+            lo = Math.min(lo, corner);
+            hi = Math.max(hi, corner);
+        }
+        return span(lo, hi);
+    }
+
+    /** {@code a * b}, or {@code Long.MIN_VALUE} standing for "did not fit". */
+    private static long multiply(long a, long b) {
+        try {
+            return Math.multiplyExact(a, b);
+        } catch (ArithmeticException overflowed) {
+            return Long.MIN_VALUE;
+        }
+    }
+
     private static boolean floatNodeCannotRender(AccelExpression node) {
         if (node.outputType().getTypeRoot() == LogicalTypeRoot.FLOAT && !rendersAsFloat(node)) {
             return true;

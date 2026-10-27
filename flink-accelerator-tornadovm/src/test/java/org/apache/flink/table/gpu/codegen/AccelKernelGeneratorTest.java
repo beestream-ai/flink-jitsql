@@ -478,6 +478,96 @@ class AccelKernelGeneratorTest {
         return new AccelInputRef(index, new IntType(false));
     }
 
+    /** An INT-typed call over the given operands, as the planner would hand one over. */
+    private static AccelExpression intCall(AccelFunction function, AccelExpression... operands) {
+        return new AccelCall(function, Arrays.asList(operands), new IntType(false));
+    }
+
+    private static AccelExpression intLit(int value) {
+        return new AccelLiteral(value, new IntType(false));
+    }
+
+    @Test
+    @DisplayName(
+            "an INT column narrows through long, because int arithmetic wraps and (int) saturates")
+    void integerNarrowingWraps() {
+        // i + 1. At i = Integer.MAX_VALUE the CPU gives MIN_VALUE; a double-to-int conversion
+        // gives MAX_VALUE. Through long the low 32 bits survive, which is the wraparound.
+        String source =
+                generate(
+                                Collections.singletonList(
+                                        intCall(AccelFunction.PLUS, intCol(0), intLit(1))),
+                                null)
+                        .source();
+
+        assertTrue(source.contains("(int) (long) ("), source);
+    }
+
+    @Test
+    @DisplayName(
+            "the lowered form of MOD is still offloadable, which is what every grouping key is")
+    void theLoweredRemainderIsAccepted() {
+        // id - (id / 1000) * 1000, which is what Calcite lowers MOD(id, 1000) to and what this
+        // project's grouped aggregate benchmarks actually run. A rule demanding that every
+        // intermediate fit an int would refuse the subtraction and take the GROUP BY with it;
+        // the quotient bounds the product, and nothing here approaches 2^53.
+        AccelExpression quotient = intCall(AccelFunction.INT_DIVIDE, intCol(0), intLit(1000));
+        AccelExpression scaled = intCall(AccelFunction.TIMES, quotient, intLit(1000));
+        AccelExpression key = intCall(AccelFunction.MINUS, intCol(0), scaled);
+
+        assertTrue(tryGenerate(Collections.singletonList(key), null).isPresent());
+    }
+
+    @Test
+    @DisplayName(
+            "a remainder of something that could have wrapped is refused, not answered wrongly")
+    void remainderOfAWrappingProductIsRefused() {
+        // MOD(i * 1000, 1000). At i = 3000000 the CPU wraps the product to -1294967296 and takes
+        // its remainder, giving -296. Exact arithmetic gives 3000000000, whose remainder is 0.
+        // The remainder reads its operand rather than narrowing it, so the operand has to be one
+        // that never wrapped.
+        AccelExpression product = intCall(AccelFunction.TIMES, intCol(0), intLit(1000));
+        AccelExpression remainder = intCall(AccelFunction.MOD, product, intLit(1000));
+
+        assertFalse(tryGenerate(Collections.singletonList(remainder), null).isPresent());
+    }
+
+    @Test
+    @DisplayName("a product of two full-range columns is refused: 2^62 is not exact in a double")
+    void productOfTwoColumnsIsRefused() {
+        // The single narrowing at the end is only equivalent to wrapping at every step while the
+        // exact value is still exact in a double. i * j reaches 2^62 and is not.
+        AccelExpression product = intCall(AccelFunction.TIMES, intCol(0), intCol(1));
+
+        assertFalse(tryGenerate(Collections.singletonList(product), null).isPresent());
+    }
+
+    @Test
+    @DisplayName("an INT subexpression widened to DOUBLE must not be one that could have wrapped")
+    void wideningAWrappingProductIsRefused() {
+        // CAST(i * 1000 AS DOUBLE). The CPU wraps the product and then widens the wrapped value,
+        // so a kernel that widens the exact one disagrees -- even though nothing here is narrowed
+        // on the way out at all.
+        AccelExpression product = intCall(AccelFunction.TIMES, intCol(0), intLit(1000));
+        AccelExpression widened = call(AccelFunction.CAST, product);
+
+        assertFalse(tryGenerate(Collections.singletonList(widened), null).isPresent());
+    }
+
+    @Test
+    @DisplayName("a predicate over a product that could wrap is refused with the projection")
+    void predicateOverAWrappingProductIsRefused() {
+        AccelExpression product = intCall(AccelFunction.TIMES, intCol(0), intLit(1000));
+        AccelExpression condition = predicate(AccelFunction.GREATER_THAN, product, intLit(5));
+
+        assertFalse(
+                tryGenerate(
+                                Collections.singletonList(
+                                        call(AccelFunction.PLUS, col(1), lit(1.0))),
+                                condition)
+                        .isPresent());
+    }
+
     private static int occurrences(String haystack, String needle) {
         int count = 0;
         for (int at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
