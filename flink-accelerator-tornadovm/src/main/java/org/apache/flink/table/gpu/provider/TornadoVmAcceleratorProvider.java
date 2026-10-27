@@ -261,6 +261,18 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         // admitted once the same Calc was fused under the Sort. The ops ceiling was bypassed
         // the same way, and its own comment describes the failure it guards against: a batch
         // that reported complete having computed nothing.
+        if (subtree instanceof AccelAggregate) {
+            return acceptAggregate((AccelAggregate) subtree, work);
+        }
+        if (subtree instanceof AccelSort) {
+            return acceptSort((AccelSort) subtree, work);
+        }
+        if (subtree instanceof AccelJoin) {
+            return acceptJoin((AccelJoin) subtree, work);
+        }
+        if (subtree instanceof AccelOverAggregate) {
+            return acceptOverAggregate((AccelOverAggregate) subtree, work);
+        }
         Optional<GpuKernelSource> kernel =
                 AccelKernelGenerator.generate(subtree, Integer.toHexString(subtree.hashCode()));
         if (!kernel.isPresent()) {

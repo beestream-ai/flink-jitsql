@@ -63,6 +63,8 @@ final class ColumnarGather implements RowGather {
 
     @Override
     public String tier() {
-        return "tier1-columnar(per-row; not a DOUBLE column)";
+        // The parenthetical named the reason the bulk tier had not been chosen. There is no
+        // bulk tier now, so it would be answering a question nobody asked.
+        return "tier1-columnar(per-row)";
     }
 }

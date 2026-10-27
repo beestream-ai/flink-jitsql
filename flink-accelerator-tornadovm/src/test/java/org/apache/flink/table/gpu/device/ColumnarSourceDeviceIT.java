@@ -149,15 +149,17 @@ class ColumnarSourceDeviceIT {
         }
     }
 
-    /** A column the bulk path refuses is still staged, just a slot at a time. */
+    /** A dictionary-encoded column is staged a slot at a time, and reads back as its values. */
     @Test
-    @DisplayName("a dictionary-encoded column falls back and still computes correctly")
+    @DisplayName("a dictionary-encoded column still computes correctly")
     void dictionaryColumnFallsBackAndStillAgrees() throws Exception {
         List<RowData> emitted = run(true);
 
         assertThat(tiers)
-                .as("a dictionary-encoded vector's array holds ids; none of it may be copied")
-                .containsExactly("tier1-columnar-bulk(0.0% bulk)");
+                .as(
+                        "a dictionary-encoded vector's array holds ids, so it is read through the"
+                                + " accessor rather than copied")
+                .containsExactly("tier1-columnar(per-row)");
         assertThat(emitted).hasSize(ROWS);
         for (int i = 0; i < ROWS; i++) {
             assertThat(emitted.get(i).getDouble(0)).as("row " + i).isEqualTo(onHost(value(i)));
