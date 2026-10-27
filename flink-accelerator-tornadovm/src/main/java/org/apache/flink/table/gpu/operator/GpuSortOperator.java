@@ -39,10 +39,6 @@ import uk.ac.manchester.tornado.cudf.Cudf;
 
 import javax.annotation.Nullable;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-
 /**
  * Orders a whole partition by one {@code INT} key: cuDF returns the permutation, the host emits its
  * staged rows in that order.
@@ -129,9 +125,8 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
     private transient int count;
 
     /** Non-null once this has stopped using the device. Holds every row, staged ones included. */
-    private transient @Nullable List<RowData> onHost;
-
     private transient BinaryRowData outRow;
+
     private transient BinaryRowWriter outWriter;
     private transient StreamRecord<RowData> outElement;
     private transient OffloadMetrics metrics;
@@ -173,17 +168,11 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
         metrics = new OffloadMetrics();
         registerMetrics();
         count = 0;
-        onHost = null;
     }
 
     @Override
     public void processElement(StreamRecord<RowData> element) {
         RowData row = element.getValue();
-        if (onHost != null) {
-            // Copied rather than retained, as everywhere else here: batch mode reuses the instance.
-            onHost.add(copyOf(row));
-            return;
-        }
         if (count == capacity) {
             // Not survivable here, and the comment on the exception says why: continuing means an
             // ArrayList bounded by the task heap rather than by the reservation this operator
@@ -208,24 +197,20 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void endInput() throws Exception {
-        if (onHost == null) {
+        {
             int n = count;
             if (n == 0) {
                 return;
             }
             long start = System.nanoTime();
-            int[] permutation;
-            try {
-                permutation = orderOnDevice(n);
-            } catch (Throwable t) {
-                LOG.warn(
-                        "ordering {} rows on the device failed; this subtask finishes on the host",
-                        n,
-                        t);
-                degrade("the device failed to order the partition");
-                sortOnHost();
-                return;
-            }
+            // Not caught. A device that stops answering mid-partition used to be survived here by
+            // materialising every staged row into an ArrayList and ordering that -- the same
+            // unbounded host answer this operator already refuses on a cardinality miss, kept
+            // alive for a different trigger. The reasoning above applies unchanged: Flink does
+            // not offer a retried attempt to an accelerator, so failing hands the partition to
+            // SortOperator, which spills. Catching Throwable also meant an OutOfMemoryError was
+            // answered by allocating a second copy of the whole partition on the heap.
+            int[] permutation = orderOnDevice(n);
             long executeNanos = System.nanoTime() - start;
             long drainStart = System.nanoTime();
             // A top-N orders everything and emits the head of it. cuDF has no partial sort, so
@@ -272,9 +257,7 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
                         n == 0 || fields == 0 ? 0 : stagingNanos / ((long) n * fields));
             }
             stagingNanos = 0L;
-            return;
         }
-        sortOnHost();
     }
 
     /**
@@ -327,49 +310,6 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
             drainBlock = MemorySegmentFactory.allocateUnpooledOffHeapMemory((int) bytes);
         }
         return drainBlock;
-    }
-
-    /** Stops using the device, keeping every row that has arrived so far. */
-    private void degrade(String why) {
-        LOG.warn("{}; this sort finishes on the host, which does not spill", why);
-        List<RowData> copies = new ArrayList<>(count + 1024);
-        for (int i = 0; i < count; i++) {
-            BinaryRowData copy = new BinaryRowData(fields);
-            BinaryRowWriter writer = new BinaryRowWriter(copy);
-            writer.reset();
-            rows.writeInto(writer, 0, i);
-            writer.complete();
-            copies.add(copy);
-        }
-        count = 0;
-        onHost = copies;
-    }
-
-    private void sortOnHost() {
-        // TimSort, so stable, which ORDER BY requires over equal keys.
-        onHost.sort(Comparator.comparingInt(row -> row.getInt(spec.sortField())));
-        // The bound applies here as much as on the device path, which clamps to spec.limit()
-        // before draining. Without it a top-N that degrades emits the whole partition: the catch
-        // around the device work is deliberately broad, and the fallback is advertised as the
-        // survivable path, so any device hiccup turned ORDER BY k LIMIT 10 over a million rows
-        // into a million rows -- logged at WARN, with the query reporting success. The sort above
-        // is stable and ascending, so the first emit rows are the right ones. NO_LIMIT is
-        // Long.MAX_VALUE, so an unbounded sort still emits everything.
-        final int emit = (int) Math.min(onHost.size(), spec.limit());
-        for (int i = 0; i < emit; i++) {
-            output.collect(outElement.replace(onHost.get(i)));
-        }
-        onHost.clear();
-    }
-
-    /** A live row copied out of whatever the upstream operator reuses. */
-    private BinaryRowData copyOf(RowData row) {
-        BinaryRowData target = new BinaryRowData(fields);
-        BinaryRowWriter writer = new BinaryRowWriter(target);
-        writer.reset();
-        StagedColumns.materialise(row, spec.rowType(), writer, 0);
-        writer.complete();
-        return target;
     }
 
     @Override

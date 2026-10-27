@@ -989,6 +989,25 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
      * out it does not fit has already consumed rows it cannot give back. {@link
      * AcceleratorContext#stagingBytes()} narrows it afterwards, where the reservation is known.
      *
+     * <h2>Admission is two-stage, and the two stages have different authority</h2>
+     *
+     * <p>This ceiling is the provisional one and the reservation is the real one. Three outcomes
+     * follow from them, and they are not the same outcome:
+     *
+     * <ul>
+     *   <li><b>The estimate does not fit the reservation.</b> The operator refuses in {@code
+     *       open()}, and {@code FallbackToCpuOperator} catches it and opens Flink's own operator
+     *       instead. No rows have been consumed, so nothing is lost but the device. A throw from
+     *       {@code open()} is this mechanism working, not a task failure.
+     *   <li><b>More rows arrive than the reservation holds.</b> {@code
+     *       StagingCapacityExceededException} fails the attempt. Rows have been consumed by then
+     *       and cannot be given back, so there is no fallback left; batch failover re-runs the
+     *       task, and the factory declines acceleration on any attempt after the first.
+     *   <li><b>The device stops answering mid-partition.</b> The same as the second case since
+     *       2026-10-27. It used to be survived by materialising the staged rows onto the heap,
+     *       which is the bound this operator exists to keep.
+     * </ul>
+     *
      * <p>One gibibyte by default, which on the rows measured so far is a few tens of millions. The
      * figure is a property of a host rather than of a query, so a deployment that has measured its
      * own can say so.
@@ -1010,7 +1029,19 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
      * six gigabytes, spent two and a half seconds having it zeroed, and then failed to fit because
      * the native arrays carry a header the row width does not count. It fell back and the offload
      * measured as a slowdown. An eighth over the estimate is the allowance for an estimate that is
-     * a little low; past that the operator degrades to the host rather than failing.
+     * a little low.
+     *
+     * <p>Past that allowance the operator fails the attempt. This said "degrades to the host rather
+     * than failing", which was never what the code did -- exceeding the capacity has always thrown
+     * {@code StagingCapacityExceededException} from the arrival path -- and is not what happens now
+     * that the device-failure path throws too. See {@link #MAX_SORT_BYTES} for the three outcomes
+     * and which of them is a fallback.
+     *
+     * <p>A zero reservation is read as "no budget was stated" and the estimate is used as-is, which
+     * means the operator allocates privately with nothing bounding it. That is a gap, and it is
+     * deliberately left alone here: declining without a reservation is the defensible rule but it
+     * would turn offload off wherever {@code stagingBytes()} reports nothing, which is a
+     * behavioural change that wants a measurement rather than a tidy-up.
      */
     private static int sortCapacity(GpuSortSpec sort, AcceleratorContext context) {
         int bytesPerRow = GpuSortSpec.bytesPerRow(sort.rowType());

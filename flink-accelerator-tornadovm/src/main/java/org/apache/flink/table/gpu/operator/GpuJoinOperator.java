@@ -43,11 +43,6 @@ import uk.ac.manchester.tornado.cudf.Cudf;
 
 import javax.annotation.Nullable;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
  * Inner-joins two inputs on one {@code INT} equality: cuDF orders the build keys, a generated
  * kernel binary-searches them, and the host gathers the matched pairs.
@@ -134,8 +129,6 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
     private transient OffloadMetrics metrics;
 
     /** Non-null once this has stopped using the device: every build row, keyed. */
-    private transient @Nullable Map<Integer, List<BinaryRowData>> onHost;
-
     public GpuJoinOperator(
             GpuJoinSpec spec,
             int buildCapacity,
@@ -179,7 +172,6 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
         buildRows = 0;
         probeBuffered = 0;
         buildEnded = false;
-        onHost = null;
     }
 
     /**
@@ -193,10 +185,6 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
     @Override
     public void processElement1(StreamRecord<RowData> element) {
         RowData row = element.getValue();
-        if (onHost != null) {
-            addToHostTable(row);
-            return;
-        }
         if (buildRows == buildCapacity) {
             // As in the sort, and for the same reason: the host table that used to take the
             // overflow grows with the input and nothing bounds it.
@@ -211,10 +199,6 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
     @Override
     public void processElement2(StreamRecord<RowData> element) throws Exception {
         RowData row = element.getValue();
-        if (onHost != null) {
-            probeOnHost(row);
-            return;
-        }
         probe.stage(row, probeBuffered++);
         if (probeBuffered == probeBatchSize) {
             flush();
@@ -225,19 +209,13 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
     public void endInput(int inputId) throws Exception {
         if (inputId == 1) {
             buildEnded = true;
-            if (onHost == null) {
-                try {
-                    orderBuildSide();
-                } catch (Throwable t) {
-                    LOG.warn("ordering the build side on the device failed", t);
-                    degrade("the device failed to order the build side");
-                }
-            }
+            // Not caught, for the reason given on degrade()'s removal: the host table this used
+            // to fall back to was a HashMap of heap copies of every build row, which is the
+            // unbounded answer processElement1 above already refuses on a capacity miss.
+            orderBuildSide();
             return;
         }
-        if (onHost == null) {
-            flush();
-        }
+        flush();
     }
 
     /**
@@ -360,16 +338,9 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
         }
         dims.set(1, count);
         long start = System.nanoTime();
-        try {
+        {
             probeGrid.setGlobalWork(count, 1, 1);
             probePlan.execute();
-        } catch (Throwable t) {
-            LOG.warn("probing {} rows on the device failed", count, t);
-            degrade("the device failed to probe");
-            for (int i = 0; i < count; i++) {
-                probeOnHostStaged(i);
-            }
-            return;
         }
         long executeNanos = System.nanoTime() - start;
 
@@ -400,70 +371,19 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
         output.collect(outElement.replace(outRow));
     }
 
-    // ------------------------------------------------------------------------------------------
-    // The host path, for when the estimate was wrong or the device stopped answering
-    // ------------------------------------------------------------------------------------------
-
-    /** Stops using the device, keeping every build row that has arrived so far. */
-    private void degrade(String why) {
-        LOG.warn("{}; this join finishes on the host, which does not spill", why);
-        Map<Integer, List<BinaryRowData>> table = new HashMap<>();
-        for (int i = 0; i < buildRows; i++) {
-            BinaryRowData copy = new BinaryRowData(spec.buildType().getFieldCount());
-            BinaryRowWriter writer = new BinaryRowWriter(copy);
-            writer.reset();
-            build.writeInto(writer, 0, i);
-            writer.complete();
-            table.computeIfAbsent(copy.getInt(spec.buildKeyField()), k -> new ArrayList<>())
-                    .add(copy);
-        }
-        buildRows = 0;
-        onHost = table;
-    }
-
-    private void addToHostTable(RowData row) {
-        BinaryRowData copy = new BinaryRowData(spec.buildType().getFieldCount());
-        BinaryRowWriter writer = new BinaryRowWriter(copy);
-        writer.reset();
-        StagedColumns.materialise(row, spec.buildType(), writer, 0);
-        writer.complete();
-        onHost.computeIfAbsent(row.getInt(spec.buildKeyField()), k -> new ArrayList<>()).add(copy);
-    }
-
-    private void probeOnHost(RowData row) {
-        List<BinaryRowData> matches = onHost.get(row.getInt(spec.probeKeyField()));
-        if (matches == null) {
-            return;
-        }
-        for (BinaryRowData buildRow : matches) {
-            outWriter.reset();
-            if (spec.buildIsLeft()) {
-                StagedColumns.materialise(buildRow, spec.buildType(), outWriter, 0);
-                StagedColumns.materialise(
-                        row, spec.probeType(), outWriter, spec.buildType().getFieldCount());
-            } else {
-                StagedColumns.materialise(row, spec.probeType(), outWriter, 0);
-                StagedColumns.materialise(
-                        buildRow, spec.buildType(), outWriter, spec.probeType().getFieldCount());
-            }
-            outWriter.complete();
-            output.collect(outElement.replace(outRow));
-        }
-    }
-
-    /** A probe row already staged when the device gave out. */
-    private void probeOnHostStaged(int position) {
-        BinaryRowData row = new BinaryRowData(spec.probeType().getFieldCount());
-        BinaryRowWriter writer = new BinaryRowWriter(row);
-        writer.reset();
-        probe.writeInto(writer, 0, position);
-        writer.complete();
-        probeOnHost(row);
-    }
-
+    /**
+     * Always true, and no longer a question worth asking of this operator.
+     *
+     * <p>It reported whether a {@code degrade()} had quietly moved the join to a heap hash table,
+     * so a job that finished on the host did not read as an accelerated one that was merely
+     * disappointing. That path is gone: the join either runs on the device or fails the attempt,
+     * and failover re-runs the task without an accelerator. The contract stays implemented because
+     * an operator that does hold its whole input could still acquire a host path, and the gauge has
+     * to mean something when one does.
+     */
     @Override
     public boolean stillOnDevice() {
-        return onHost == null;
+        return true;
     }
 
     @Override
