@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package ai.beestream.flink.jitsql.device;
 
 import ai.beestream.flink.jitsql.operator.GpuSortOperator;
