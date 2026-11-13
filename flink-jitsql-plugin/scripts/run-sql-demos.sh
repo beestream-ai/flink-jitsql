@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,73 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Runs HaversineSQLExample or CudfSortSQLExample in one JVM, against an in-process
-# MiniCluster -- the way WordCountSQLExample runs, and the way these are meant to be
-# read and demonstrated. No cluster to start and no jar to install.
-#
-#   run-sql-demos.sh haversine  [--printKernel]     [--rows N] [--data DIR]
-#   run-sql-demos.sh cudf-sort  [--printBytecodes]  [--rows N] [--data DIR]
-#
-# --rows            defaults to 2,000,000 for haversine and 4,000,000 for the cuDF demos.
-#                   Lower them with care: setting a device up costs a fixed ~300 ms and
-#                   the accelerator refuses work that cannot repay it, so cudf-sort is
-#                   DECLINED below about two million rows -- it answers correctly on
-#                   SortOperator and prints no LAUNCH, which on a stage looks like a broken
-#                   demo rather than a cost model working. haversine has far more
-#                   arithmetic per row and still offloads at 500,000.
-#
-# --printKernel     prints the CUDA TornadoVM generated for the query, before the result.
-#                   This is the evidence for the haversine example: the function it prints
-#                   exists nowhere in this repository and was compiled from the SQL at job
-#                   start.
-#
-# --printBytecodes  prints what TornadoVM's interpreter actually did -- the transfers and
-#                   the LAUNCH. This is the evidence for the cuDF example, where
-#                   --printKernel prints nothing because there is no generated kernel to
-#                   print: the operator is served by cudf::stable_sorted_order, and the
-#                   line to look for is
-#                       bc: LAUNCH task - sort.order[sortedOrder] on [NVIDIA CUDA] ...
-#
-# Either flag works on either example. Neither changes what is computed.
-#
-# EXTRA_JVM         extra JVM flags, passed through verbatim.
-#
-# VERBOSE=1         turns on the accelerator's own logging. The demos are quiet by default
-#                   so the output reads from the back of a room; turn this on when a kernel
-#                   or a LAUNCH does not appear and the accelerator will say why it
-#                   declined.
-#
-# What this script exists to assemble, none of which is a property of the query:
-#
-#   1. TornadoVM's JVM arguments, from the SDK's own argfile.
-#   2. -Dtornado.enable.fma=false -Dtornado.cuda.compile.profile=repro. Not optional and
-#      not a tuning knob. A GPU will happily compute a*b+c as one fused operation with a
-#      single rounding, which is a *different* number from the two the CPU computes; the
-#      and the provider no longer checks, so these are a hard deployment obligation.
-#      BOTH are needed: enable.fma=false stops Graal emitting a literal fma() call, and
-#      --fmad=false (the repro profile) stops NVRTC contracting the separated multiply and
-#      add back into one fma.rn.f64 in the PTX. Either alone still fuses.
-#   3. RAPIDS libcudf and its dependencies on LD_LIBRARY_PATH, for the cuDF demo.
-#      libtornado-cudf.so links against several wheels' worth of shared objects and dlopen
-#      resolves them at load time, so a missing one reads exactly like a missing shim.
-#   4. The provider jar on the classpath, from a built Flink distribution's lib/.
-#
-# Environment (all have defaults that match this machine):
-#   FLINK_DIST      a built Flink distribution: its lib/ is the classpath, and the
-#                   provider jar must be in it (scripts/gpu-cluster-setup.sh puts it there)
-#   TORNADO_SDK     a built TornadoVM CUDA SDK. Deliberately not TORNADOVM_HOME: that one
-#                   is commonly already exported by sdkman to an unrelated SDK, and this
-#                   demo once produced nothing but a log4j linkage error against a
-#                   TornadoVM 2.2.0-opencl install that happened to be on PATH. Whatever
-#                   is chosen is validated below before the JVM is started.
-#   RAPIDS_HOME     the directory holding libcudf/, librmm/, libkvikio/, rapids_logger/,
-#                   nvidia/ and libkvikio_cu12.libs from the RAPIDS wheels. Create one with
-#                       python3 -m venv /tmp/cudfenv
-#                       /tmp/cudfenv/bin/pip install --extra-index-url=https://pypi.nvidia.com libcudf-cu12
-#                       RAPIDS_HOME=$(echo /tmp/cudfenv/lib/python3.*/site-packages)
-#                   Only the cuDF demo needs it.
-#   JAVA_HOME       a JDK 21; TornadoVM's off-heap arrays are a preview API there
 
 set -euo pipefail
 

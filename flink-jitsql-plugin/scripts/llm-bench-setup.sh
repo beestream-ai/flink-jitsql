@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,30 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Prepares everything the two LLM pipeline experiments need, end to end, and writes an
-# environment file that llm-bench-run.sh sources. Run it once.
-#
-#   ./llm-bench-setup.sh [--skip-tornadovm] [--skip-jitllm] [--skip-llamacpp]
-#                        [--skip-flink] [--skip-deploy] [--skip-data] [--rows N]
-#
-# Every step is skippable because they take very different amounts of time and only some of
-# them change when you are iterating. The order below is not a preference: each step installs
-# the artifact the next one compiles against, and out of order the build succeeds against a
-# stale jar and fails at run time instead.
-#
-# Paths are taken from the environment when set. Unset, the four checkouts are looked for
-# beside this repository -- which is how 1-fetch.sh lays them out -- so a tree fetched
-# anywhere needs no edit and no variable:
-#
-#   FLINK_SRC       the flink checkout on the gpu-offload branch
-#   FLINK_HOME      the built distribution inside it
-#   TORNADOVM_SRC   the TornadoVM checkout
-#   JITLLM_SRC      the jitllm checkout (github.com/beehive-lab/jitllm)
-#   LLAMACPP_SRC    the llama.cpp checkout
-#   MODEL           the .gguf both engines load
-#   WORK            scratch space for the dataset, the CUDA shim and the env file
-#   JDK21           a JDK 21 (TornadoVM's SDK is built with it and the cluster must match)
 
 set -euo pipefail
 

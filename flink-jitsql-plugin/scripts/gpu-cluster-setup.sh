@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,27 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Prepares a built Flink distribution to run GPU-offloaded jobs.
-#
-#   - copies the provider jar into lib/, so it is on the TaskManager classpath
-#   - writes the TornadoVM JVM flags into conf/config.yaml
-#
-# The flags come from TornadoVM's own argfile template rather than being copied by hand: it is
-# generated from `tornado --printJavaFlags`, so it stays correct across TornadoVM versions. They
-# have to reach every JVM that touches the plan -- the client builds it, the JobManager holds it,
-# the TaskManager runs the kernel -- so all three are set. Without them the TaskManager dies
-# deserializing the operator with UnsupportedClassVersionError.
-#
-# It also installs the Parquet SQL format, which the distribution does not ship. The benchmark
-# reads its input from Parquet, and an example jar carries only its own class, so the format has
-# to come from the cluster classpath.
-#
-# Usage: gpu-cluster-setup.sh <flink-dist-dir>
-#   TORNADOVM_HOME must point at a built TornadoVM SDK.
-#   PROVIDER_JAR may point at the provider jar; otherwise this checkout's own target/ is used.
-#   PARQUET_JAR may point at flink-sql-parquet-<version>.jar; otherwise it is looked up under
-#   FLINK_SRC, if that is set to a Flink checkout.
 
 set -euo pipefail
 

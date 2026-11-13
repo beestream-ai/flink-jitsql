@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,20 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Runs ONE of the two LLM pipeline experiments: start the cluster, run it once, stop the
-# cluster. Requires llm-bench-setup.sh to have been run first.
-#
-#   ./llm-bench-run.sh --gpu     GPU preprocessing + jitllm inside the TaskManager's JVM
-#   ./llm-bench-run.sh --cpu     CPU preprocessing + llama.cpp in its own process
-#
-#   --warm      run once to make the engine resident, then time a second run. Without it the
-#               timed run is a COLD one, which is a different and much closer number -- the
-#               accelerated arm spends its preprocessing advantage loading the model. The
-#               report's headline is the warm figure.
-#   --modes N   operating modes per reading, i.e. arithmetic per row (default 8). Above 8 the
-#               provider declines the subtree unless its ceiling is raised; see EXPERIMENTS.md.
-#   --explain   print the plan and the accelerator's accept/decline reasons, then run.
 
 set -euo pipefail
 

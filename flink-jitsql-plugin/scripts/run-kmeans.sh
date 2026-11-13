@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,26 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# One k-means iteration on a standalone cluster, CPU against GPU.
-#
-# Measures what a user experiences: `flink run` against a real JobManager and TaskManager,
-# not a MiniCluster. The input is written once beforehand so the source is not on the
-# critical path.
-#
-# The query has the shape that has paid before -- a lot of arithmetic per row, an output far
-# smaller than the input -- and it splits along the seam this integration exists for: the
-# assignment is per-row work a generated kernel does, and recomputing the centroids is a
-# grouped aggregation that needs cross-row cooperation.
-#
-# Usage: run-kmeans.sh <flink-dist-dir> [rows] [parallelism] [runs]
-#   DIMS and CLUSTERS set the arithmetic: the projection holds about 3*DIMS*CLUSTERS
-#   expressions, and the two shapes that paid before sat between 500 and 2000 of them.
-#   STAGE is `assign` (the arithmetic alone, one output row) or `iterate` (a whole
-#   iteration, CLUSTERS output rows).
-#   ARGMIN is `sign` or `case`. Only `iterate` uses it, and the difference between the two
-#   is what a missing conditional in the IR costs: `case` is the natural SQL and cannot be
-#   offloaded, `sign` says the same thing with arithmetic that can.
-#   TORNADOVM_HOME must point at a built TornadoVM SDK; run gpu-cluster-setup.sh first.
 
 set -euo pipefail
 

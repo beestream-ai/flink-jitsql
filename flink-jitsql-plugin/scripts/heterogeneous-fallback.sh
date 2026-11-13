@@ -1,46 +1,17 @@
 #!/usr/bin/env bash
-################################################################################
-#  Licensed to the Apache Software Foundation (ASF) under one
-#  or more contributor license agreements.  See the NOTICE file
-#  distributed with this work for additional information
-#  regarding copyright ownership.  The ASF licenses this file
-#  to you under the Apache License, Version 2.0 (the
-#  "License"); you may not use this file except in compliance
-#  with the License.  You may obtain a copy of the License at
+# Copyright (c) 2026 Beestream Ltd.
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-################################################################################
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Does a job planned for the GPU survive a TaskManager that has no GPU module?
-#
-# The offload decision is made in the client, which cannot know where the task will run. This
-# reproduces that mismatch on one machine: the client and JobManager start from the full lib/,
-# so the plan is built by a JVM that can reach TornadoVM, while the TaskManager is started with
-# FLINK_LIB_DIR pointing at a copy of lib/ with the provider jar removed.
-#
-# The split matters. Simply uninstalling the module does not reproduce anything, because then
-# the client cannot reach a device either and never selects the node -- the plan comes out CPU
-# and the job runs normally. Only a client that can offload and a TaskManager that cannot puts
-# the two halves of the decision on different machines, which is what a heterogeneous cluster
-# does every time it schedules.
-#
-# Expected outcome depends on which side of GpuOrCpuCalcOperatorFactory the build is on:
-#
-#   before it   the job FAILS -- "Cannot load user class:
-#               ai.beestream.flink.jitsql.operator.GpuCalcOperator"
-#   after it    the job COMPLETES on the code-generated operator, at CPU speed, and the
-#               TaskManager log says which path it took and why
-#
-# Usage: heterogeneous-fallback.sh <flink-dist-dir> [rows] [runs]
-#   DEPOTS sets the number of reference points (20 by default).
-#   DATA overrides the input path; the input is generated on first use.
-#   TORNADOVM_HOME must point at a built TornadoVM SDK; run gpu-cluster-setup.sh first.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 set -uo pipefail
 

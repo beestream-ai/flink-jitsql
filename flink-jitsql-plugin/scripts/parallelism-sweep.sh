@@ -1,39 +1,17 @@
 #!/usr/bin/env bash
-################################################################################
-#  Licensed to the Apache Software Foundation (ASF) under one
-#  or more contributor license agreements.  See the NOTICE file
-#  distributed with this work for additional information
-#  regarding copyright ownership.  The ASF licenses this file
-#  to you under the Apache License, Version 2.0 (the
-#  "License"); you may not use this file except in compliance
-#  with the License.  You may obtain a copy of the License at
+# Copyright (c) 2026 Beestream Ltd.
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
-################################################################################
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Does the offload path work, and scale, above parallelism 1?
-#
-# The CPU arm gets another core per subtask; the GPU arm gets another competitor for one
-# device. The interesting number is therefore not whether the GPU arm gets faster -- it cannot
-# outrun one device -- but whether it stays correct, whether every subtask actually reaches the
-# device, and how fast the CPU arm closes the gap.
-#
-# Input is regenerated as one file per subtask at the widest level tested, so no level is
-# limited by how few splits the source can hand out.
-#
-# Usage: parallelism-sweep.sh <flink-dist-dir>
-#   LEVELS  parallelism levels to test (default "1 2 4 8 16 32")
-#   RUNS    runs per configuration, the first discarded as warm-up (default 5)
-#   DEPOTS  reference points per row (default 20)
-#   OUT     results directory (default /tmp/flink-gpu-parallelism)
-#   DATA    input path, generated on first use
-#   TORNADOVM_HOME must point at a built TornadoVM SDK.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 set -uo pipefail
 

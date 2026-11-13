@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,21 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# End-to-end haversine benchmark on a standalone cluster, CPU against GPU.
-#
-# Measures what a user actually experiences: `flink run` against a real JobManager and
-# TaskManager, not a MiniCluster. The input is written once to Parquet beforehand, so the
-# source is not on the critical path -- with datagen it costs ~100 us/row and buries the
-# operator no matter how fast the kernel is.
-#
-# Usage: run-haversine.sh <flink-dist-dir> [rows] [parallelism] [runs]
-#   DEPOTS sets how many reference points the nearest-of query compares against (20 by default).
-#   One depot is a plain distance, which is only about a fifth of the job's wall time and so
-#   caps the whole query near 1.2x however fast the device is.
-#   TORNADOVM_HOME must point at a built TornadoVM SDK; run gpu-cluster-setup.sh first.
-#   FORMAT selects the input format (csv by default; parquet needs Hadoop on the cluster
-#   classpath, which the distribution does not ship).
 
 set -euo pipefail
 

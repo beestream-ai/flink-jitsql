@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Beestream Ltd.
 #
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -15,25 +12,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# Prepares a distribution already set up by gpu-cluster-setup.sh to also run the LLM pipeline
-# examples. Run that first; this adds only what the language model needs.
-#
-# Two things, and both are deployment rather than anything a query says:
-#
-#   1. jitllm into lib/, not into the job jar. A model kept resident across jobs has to be held
-#      by a class the parent classloader owns, because Flink discards the user-code classloader
-#      when a job finishes and everything it defined goes with it. From lib/ the engine classes
-#      outlive the job, so the second query on this TaskManager finds the weights already on the
-#      device. See ResidentEngines.
-#
-#   2. The system properties jitllm reads at class-initialisation time. The batched-prefill path
-#      is gated on two of them and they are read when the state buffers are allocated, which is
-#      before any code of ours could set them. Left unset, prompt processing runs one token per
-#      forward -- 138 tokens a second on this card against 5562 -- and a digest of a few hundred
-#      tokens spends seconds in prefill.
-#
-# Usage: llm-pipeline-setup.sh <flink-dist-dir> <jitllm-jar>
 
 set -euo pipefail
 
