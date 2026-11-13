@@ -57,6 +57,10 @@ REPO=$(cd "${HERE}/../.." && pwd)
 SIBLINGS=$(dirname "${REPO}")
 FLINK_SRC="${FLINK_SRC:-${SIBLINGS}/flink}"
 FLINK_DIST="${FLINK_DIST:-${FLINK_SRC}/flink-dist/target/flink-2.3.0-bin/flink-2.3.0}"
+# The repository's single statement of where things are; see scripts/env.sh.
+_jitsql_env="${REPO}/scripts/env.sh"
+[ -r "$_jitsql_env" ] && source "$_jitsql_env"
+
 RAPIDS_HOME="${RAPIDS_HOME:-$HOME/.local/share/rapids-libcudf}"
 
 # A JDK 21: whatever is already in the environment if it is one, then the usual

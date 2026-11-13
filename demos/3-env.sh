@@ -30,6 +30,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
 fi
 
+# The repository's single statement of where things are. Everything below uses
+# ":${VAR:=default}", which respects a value already set, so this file is authoritative
+# and the defaults here are only the fallback for a variable it does not define.
+_jitsql_env="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/env.sh"
+[ -r "$_jitsql_env" ] && source "$_jitsql_env"
+
 _demos_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- which tree is this? ---------------------------------------------------
