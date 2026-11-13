@@ -164,7 +164,7 @@ public final class KMeansEngine implements AutoCloseable {
                                 dims,
                                 clusters)
                         .transferToHost(DataTransferMode.UNDER_DEMAND, centroids);
-        plan = new TornadoExecutionPlan(graph.snapshot());
+        plan = DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()));
     }
 
     /** Runs {@code iterations} passes and brings the centroids back once. */

@@ -117,7 +117,7 @@ public final class FeatureGramEngine implements AutoCloseable {
                                 gram,
                                 columns)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, gram);
-        plan = new TornadoExecutionPlan(graph.snapshot());
+        plan = DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()));
     }
 
     /** Stages one value. Column-major, so a column's rows are contiguous for cuBLAS. */

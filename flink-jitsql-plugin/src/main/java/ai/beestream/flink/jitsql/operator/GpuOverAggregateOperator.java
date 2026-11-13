@@ -102,6 +102,10 @@ public class GpuOverAggregateOperator extends AbstractStreamOperator<RowData>
     @Override
     public void open() throws Exception {
         super.open();
+        // Bind this subtask to a card before anything builds a plan. On a single-GPU host this
+        // resolves to device 0, where everything ran anyway; on a multi-GPU host it stops every
+        // slot piling onto device 0. See DeviceAffinity.
+        DeviceAffinity.bindSubtask(getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         inputFields = spec.inputType().getFieldCount();
         // No key column: nothing here goes to the device except the values, which are their own
         // buffer. -1 means every field is held host-side.
@@ -182,7 +186,8 @@ public class GpuOverAggregateOperator extends AbstractStreamOperator<RowData>
                         .transferToDevice(DataTransferMode.EVERY_EXECUTION, values)
                         .libraryTask("scan", Cudf::runningSum, count, values, totals)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, totals);
-        try (TornadoExecutionPlan batch = new TornadoExecutionPlan(graph.snapshot())) {
+        try (TornadoExecutionPlan batch =
+                DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()))) {
             batch.execute();
         }
     }
@@ -211,6 +216,7 @@ public class GpuOverAggregateOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void close() throws Exception {
+        DeviceAffinity.clear();
         if (metrics != null && metrics.getBatches() > 0) {
             LOG.info(metrics.report("GpuOverAggregateOperator " + spec));
         }

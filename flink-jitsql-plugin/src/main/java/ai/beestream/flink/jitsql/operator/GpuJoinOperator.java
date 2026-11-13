@@ -142,6 +142,10 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
     @Override
     public void open() throws Exception {
         super.open();
+        // Bind this subtask to a card before anything builds a plan. On a single-GPU host this
+        // resolves to device 0, where everything ran anyway; on a multi-GPU host it stops every
+        // slot piling onto device 0. See DeviceAffinity.
+        DeviceAffinity.bindSubtask(getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         if (spec.estimatedBuildRows() > buildCapacity) {
             throw new IllegalStateException(
                     "this join would hold "
@@ -236,7 +240,8 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
                         // arise; stated as 0 for the same reason the sort states it.
                         .libraryTask("order", Cudf::sortedOrder, buildRows, build.keys(), order)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, order);
-        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+        try (TornadoExecutionPlan plan =
+                DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()))) {
             plan.execute();
         }
         for (int i = 0; i < buildRows; i++) {
@@ -277,7 +282,9 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
         probeGrid = new WorkerGrid1D(probeBatchSize);
         GridScheduler scheduler = new GridScheduler();
         scheduler.addWorkerGrid("join-probe.probe", probeGrid);
-        probePlan = new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(scheduler);
+        probePlan =
+                DeviceAffinity.apply(
+                        new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(scheduler));
     }
 
     /**
@@ -387,6 +394,7 @@ public class GpuJoinOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void close() throws Exception {
+        DeviceAffinity.clear();
         if (probePlan != null) {
             probePlan.close();
             probePlan = null;

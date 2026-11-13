@@ -159,7 +159,7 @@ public final class LogisticRegressionEngine implements AutoCloseable {
      */
     public void open() {
         if ("reduce".equals(contraction)) {
-            plan = new TornadoExecutionPlan(reduceGraph().snapshot());
+            plan = DeviceAffinity.apply(new TornadoExecutionPlan(reduceGraph().snapshot()));
             return;
         }
 
@@ -236,7 +236,7 @@ public final class LogisticRegressionEngine implements AutoCloseable {
                                 learningRate / rows,
                                 features)
                         .transferToHost(DataTransferMode.UNDER_DEMAND, weights);
-        plan = new TornadoExecutionPlan(graph.snapshot());
+        plan = DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()));
         if (cudaGraph) {
             // Returns a wrapper rather than mutating, so the result has to be kept.
             plan = plan.withCUDAGraph();

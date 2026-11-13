@@ -170,7 +170,8 @@ public final class GpuGramEngine implements AutoCloseable {
      * rounds the way the library rounds either way.
      */
     private TornadoExecutionPlan planFor(TaskGraph graph) {
-        TornadoExecutionPlan built = new TornadoExecutionPlan(graph.snapshot());
+        TornadoExecutionPlan built =
+                DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()));
         return strictArithmetic ? built.withStrictFloatingPoint() : built;
     }
 

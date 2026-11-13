@@ -265,7 +265,9 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         GridScheduler sortScheduler = new GridScheduler();
         sortScheduler.addWorkerGrid("calc-sort.kernel", sortGrid);
         TornadoExecutionPlan sortPlan =
-                new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(sortScheduler);
+                DeviceAffinity.apply(
+                        new TornadoExecutionPlan(graph.snapshot())
+                                .withGridScheduler(sortScheduler));
         if (spec.requiresStrictArithmetic()) {
             sortPlan = sortPlan.withStrictFloatingPoint();
         }
@@ -515,10 +517,14 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         if (compacting) {
             TaskGraph compact = compactionGraph(batchSize, scheduler);
             plan =
-                    new TornadoExecutionPlan(graph.snapshot(), compact.snapshot())
-                            .withGridScheduler(scheduler);
+                    DeviceAffinity.apply(
+                            new TornadoExecutionPlan(graph.snapshot(), compact.snapshot())
+                                    .withGridScheduler(scheduler));
         } else {
-            plan = new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(scheduler);
+            plan =
+                    DeviceAffinity.apply(
+                            new TornadoExecutionPlan(graph.snapshot())
+                                    .withGridScheduler(scheduler));
         }
         if (spec.requiresStrictArithmetic()) {
             // The planner found this kernel's value can reach something that decides which rows
@@ -1065,7 +1071,9 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         tailGrid = new WorkerGrid1D(spec.batchSize());
         GridScheduler scheduler = new GridScheduler();
         scheduler.addWorkerGrid("tail.kernel", tailGrid);
-        tailPlan = new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(scheduler);
+        tailPlan =
+                DeviceAffinity.apply(
+                        new TornadoExecutionPlan(graph.snapshot()).withGridScheduler(scheduler));
         if (profile) {
             tailPlan = tailPlan.withProfiler(ProfilerMode.SILENT);
         }

@@ -108,6 +108,10 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
     @Override
     public void open() throws Exception {
         super.open();
+        // Bind this subtask to a card before anything builds a plan. On a single-GPU host this
+        // resolves to device 0, where everything ran anyway; on a multi-GPU host it stops every
+        // slot piling onto device 0. See DeviceAffinity.
+        DeviceAffinity.bindSubtask(getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         if (sort.estimatedRows() > capacity) {
             // The last moment this can be handed to the operator that knows how to spill.
             throw new IllegalStateException(
@@ -203,6 +207,7 @@ public class GpuProjectedSortOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void close() throws Exception {
+        DeviceAffinity.clear();
         if (metrics != null && metrics.getBatches() > 0) {
             LOG.info(metrics.report("GpuProjectedSortOperator " + spec));
         }

@@ -79,6 +79,10 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
     @Override
     public void open() throws Exception {
         super.open();
+        // Bind this subtask to a card before anything builds a plan. On a single-GPU host this
+        // resolves to device 0, where everything ran anyway; on a multi-GPU host it stops every
+        // slot piling onto device 0. See DeviceAffinity.
+        DeviceAffinity.bindSubtask(getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         engine =
                 new GpuGramEngine(
                         kernel,
@@ -183,6 +187,7 @@ public class GpuGramOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void close() throws Exception {
+        DeviceAffinity.clear();
         if (engine != null) {
             engine.close();
             engine = null;

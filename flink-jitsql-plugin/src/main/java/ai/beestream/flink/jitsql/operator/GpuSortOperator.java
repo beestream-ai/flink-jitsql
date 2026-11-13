@@ -140,6 +140,10 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
     @Override
     public void open() throws Exception {
         super.open();
+        // Bind this subtask to a card before anything builds a plan. On a single-GPU host this
+        // resolves to device 0, where everything ran anyway; on a multi-GPU host it stops every
+        // slot piling onto device 0. See DeviceAffinity.
+        DeviceAffinity.bindSubtask(getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         if (spec.estimatedRows() > capacity) {
             // The one refusal that has to happen here. See the class comment: this is the last
             // moment the task can be handed to the operator that knows how to spill.
@@ -276,7 +280,8 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
                         // null key would silently order as whatever its bits happen to be.
                         .libraryTask("order", Cudf::sortedOrder, n, rows.keys(), order)
                         .transferToHost(DataTransferMode.EVERY_EXECUTION, order);
-        try (TornadoExecutionPlan plan = new TornadoExecutionPlan(graph.snapshot())) {
+        try (TornadoExecutionPlan plan =
+                DeviceAffinity.apply(new TornadoExecutionPlan(graph.snapshot()))) {
             plan.execute();
         }
         int[] permutation = new int[n];
@@ -313,6 +318,7 @@ public class GpuSortOperator extends AbstractStreamOperator<RowData>
 
     @Override
     public void close() throws Exception {
+        DeviceAffinity.clear();
         if (metrics != null && metrics.getBatches() > 0) {
             LOG.info(metrics.report("GpuSortOperator " + spec));
         }
