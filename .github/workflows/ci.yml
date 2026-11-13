@@ -49,12 +49,14 @@ jobs:
           cache: maven
 
       # The provider compiles against a Flink that is not released: the accelerator SPI
-      # exists only on the gpu-offload branch. Until that lands, the reactor has to be
-      # built and installed first, and the fork/branch to build from are inputs rather
-      # than constants so this does not silently pin someone's personal remote.
+      # exists only on the gpu-offload branch of the fork. Until a FLIP lands it upstream,
+      # the reactor has to be built and installed first. The repository and branch stay
+      # inputs so a contributor can point this at their own fork, but the default is the
+      # fork that actually has the branch -- apache/flink does not, so defaulting there
+      # made the default a guaranteed failure.
       - name: Build the Flink SPI this compiles against
         env:
-          FLINK_REPO: ${{ vars.FLINK_REPO || 'https://github.com/apache/flink.git' }}
+          FLINK_REPO: ${{ vars.FLINK_REPO || 'https://github.com/beestream-ai/flink.git' }}
           FLINK_REF: ${{ vars.FLINK_REF || 'gpu-offload' }}
         run: |
           git clone --depth 1 --branch "$FLINK_REF" "$FLINK_REPO" /tmp/flink
@@ -62,30 +64,16 @@ jobs:
           ./mvnw -B -q install -DskipTests -Dfast -Pskip-webui-build -T1C \
             -pl flink-table/flink-table-common,flink-table/flink-table-runtime -am
 
-      # tornado-api is not on Maven Central, so a device-free build still needs the jars
-      # the SDK installs. Building TornadoVM here would cost far more than this job is
-      # worth; the artefacts are cached instead and the job says plainly when they are
-      # missing rather than failing with an unresolved dependency nobody can read.
-      - name: Restore TornadoVM artefacts
-        id: tornado
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository/io/github/beehive-lab
-          key: tornado-${{ vars.TORNADO_VERSION || '6.1.1-jdk21-dev' }}
-
-      - name: Explain a cache miss rather than fail obscurely
-        if: steps.tornado.outputs.cache-hit != 'true'
-        run: |
-          echo "::error::No cached TornadoVM artefacts for ${{ vars.TORNADO_VERSION || '6.1.1-jdk21-dev' }}."
-          echo "::error::tornado-api is not on Maven Central. Run the device job once on a"
-          echo "::error::machine with a TornadoVM build to populate this cache."
-          exit 1
-
+      # TornadoVM is resolved from Maven Central like any other dependency. It was not
+      # always: until 8.1.0 these artefacts existed only in whatever local repository a
+      # TornadoVM build had populated, so this job carried a cache of them and refused to
+      # run on a miss. None of that is needed now, and a runner with no TornadoVM on it
+      # builds this project from a cold start.
       - name: Build and test, formatting checks enabled
-        run: mvn -B -o test -DskipDeviceTests
+        run: mvn -B clean test -DskipDeviceTests
 
       - name: Check formatting
-        run: mvn -B -o spotless:check
+        run: mvn -B spotless:check
 
   device:
     name: device (GPU, TornadoVM, RAPIDS)
@@ -127,7 +115,7 @@ jobs:
           fi
 
       - name: Device tests
-        run: mvn -B -o test -Pdevice -Dtornado.sdk="$TORNADOVM_HOME"
+        run: mvn -B test -Pdevice -Dtornado.sdk="$TORNADOVM_HOME"
 
       # Skips are the thing to surface. DeviceAssumptions skips rather than fails when a
       # card or the cuDF shim is absent -- correct, because a missing card is not a broken
