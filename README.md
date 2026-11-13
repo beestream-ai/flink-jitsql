@@ -64,16 +64,17 @@ runs the code-generated operator instead and logs why. Nothing fails.
 | module | what it is |
 |---|---|
 | `flink-jitsql-plugin` | the provider: kernel generation, gathers, the staging operator |
-| `flink-jitsql-bench` | runnable examples and benchmarks, one jar each |
+| `flink-jitsql-bench` | the runnable examples, one jar each |
 
-`flink-jitsql-plugin/FINDINGS.md` is the measurement record: where the
-time actually goes, and which of the original predictions it contradicted.
+The benchmarks, the measured applications and the results are in
+[`flink-jitsql-benchmarking`](https://github.com/beestream-ai/flink-jitsql-benchmarking).
+A benchmark is not a thing you read to understand a project, so what is left here
+is the examples that demonstrate the mechanism: one query each, and no timings.
 
 ## Two examples to read first
 
-Everything else in `flink-jitsql-bench` is a benchmark: a
-command line, several arms, and an environment record, built to answer a question
-rather than to be read. These two are not. They are written the way
+The examples in `flink-jitsql-bench` all run a query and report no timings. These
+two are the ones to start with. They are written the way
 `WordCountSQLExample` is — one class, one `main`, the SQL in the middle of it —
 they run the query once, and they report no timings at all. Between them they show
 the two halves of the integration.

@@ -128,4 +128,6 @@ What is left to attack is the source, which is 89% of the offloaded job.
 Results agree between the two paths to 2 ULP. They are not bit-identical and should not be expected
 to be: the device reassociates floating-point arithmetic differently.
 
-`FINDINGS.md` has the measurements behind the cost floor.
+The measurements behind the cost floor are in
+[`flink-jitsql-benchmarking`](https://github.com/beestream-ai/flink-jitsql-benchmarking),
+in `FINDINGS.md`.
