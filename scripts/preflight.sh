@@ -101,6 +101,19 @@ else
     fi
 fi
 
+# --- RAPIDS libcudf, checked whether or not an SDK is present
+#
+# The shim check above lives inside the SDK branch, so without TORNADOVM_HOME it never runs
+# and a bare machine would be told nothing about libcudf at all -- then find out later, as a
+# silent decline with the right answer. This check is independent of the SDK.
+if [ ! -d "$RAPIDS_HOME" ]; then
+    warn rapids "no libcudf at RAPIDS_HOME=$RAPIDS_HOME; run 'source scripts/cudf-env.sh' or the cuDF-served operators will decline and their tests will skip"
+elif [ ! -f "$RAPIDS_HOME/libcudf/lib64/libcudf.so" ]; then
+    warn rapids "$RAPIDS_HOME exists but has no libcudf/lib64/libcudf.so; re-run 'source scripts/cudf-env.sh'"
+else
+    ok rapids "libcudf at $RAPIDS_HOME"
+fi
+
 # --- GPU
 if ! command -v nvidia-smi >/dev/null 2>&1; then
     fail gpu "nvidia-smi not found; no NVIDIA driver on this machine"
