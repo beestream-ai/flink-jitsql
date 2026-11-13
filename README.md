@@ -117,8 +117,8 @@ The first is far more common and is not a defect in anything here.
 | `CudfSortSQLExample` | an **`ORDER BY` served by a library**. No generated kernel at all: the provider recognises the operator and hands it to `cudf::stable_sorted_order` through TornadoVM's `tornado-cudf` binding. | `--printBytecodes` prints `LAUNCH task - sort.order[sortedOrder]` on the CUDA device |
 
 ```bash
-flink-jitsql-plugin/scripts/run-sql-demos.sh haversine --printKernel
-flink-jitsql-plugin/scripts/run-sql-demos.sh cudf-sort --printBytecodes
+scripts/run-sql-demos.sh haversine --printKernel
+scripts/run-sql-demos.sh cudf-sort --printBytecodes
 ```
 
 Both run in one JVM against an in-process MiniCluster, so there is no cluster to

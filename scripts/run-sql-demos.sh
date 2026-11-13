@@ -55,7 +55,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO=$(cd "${HERE}/../.." && pwd)
+REPO=$(cd "${HERE}/.." && pwd)   # scripts/ sits at the repository root
 
 # Derived from where this script is, not from one machine's home directory: the
 # checkouts sit beside this repository, which is how 1-fetch.sh lays them out.
