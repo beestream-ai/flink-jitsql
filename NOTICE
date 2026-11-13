@@ -1,0 +1,56 @@
+flink-accelerator-tornadovm
+Copyright (c) 2026 Beestream Ltd.
+
+flink-accelerator-tornadovm is licensed under the Apache License, Version 2.0 (see LICENSE).
+Every source file in this repository carries the matching header.
+
+No third-party source is included here. The build, the examples and the demos use the
+material below, each fetched from its own project and staying under its own licence.
+
+1. Apache Flink, under the Apache License, Version 2.0
+
+   https://flink.apache.org. This project implements an SPI that Flink discovers through
+   ServiceLoader. Flink is a `provided` dependency: it is compiled against and expected on
+   the TaskManager, and no Flink class is redistributed here.
+
+   The SPI is not in any Flink release. It exists on branch `gpu-offload` of
+   https://github.com/beestream-ai/flink, a fork of https://github.com/apache/flink, and
+   those changes stay under the Apache Software Foundation's Apache 2.0 licence and keep its
+   file headers. Nothing here relicenses them.
+
+2. TornadoVM, under the Apache License, Version 2.0
+
+   https://github.com/beehive-lab/TornadoVM, used in two ways and redistributed in neither:
+   as the Maven artifacts io.github.beehive-lab:tornado-api, :tornado-cublas and
+   :tornado-cudf, all `provided`; and at run time as an installed SDK with the CUDA backend,
+   which the TaskManager loads from its own module path.
+
+3. NVIDIA RAPIDS libcudf, under the Apache License, Version 2.0
+
+   https://github.com/rapidsai/cudf. Reached only through TornadoVM's cuDF binding, never
+   linked or called directly from this project, and not redistributed. It is expected on
+   LD_LIBRARY_PATH at run time; where it is absent the operators that use it decline and the
+   query runs on the host.
+
+4. The NVIDIA CUDA toolkit and cuBLAS, under the NVIDIA Software Licence Agreement
+
+   https://developer.nvidia.com/cuda-toolkit. TornadoVM's cuBLAS binding dlopens the system
+   library through java.lang.foreign. Nothing of NVIDIA's is bundled, compiled or
+   redistributed here.
+
+5. jitllm, under the Apache License, Version 2.0
+
+   https://github.com/beestream-ai/jitllm, a `provided` dependency of the examples module
+   only. The LLM pipeline example runs inference in the TaskManager's own JVM through it;
+   nothing in the provider itself refers to it.
+
+6. llama.cpp, under the MIT Licence
+
+   https://github.com/ggml-org/llama.cpp. The demo scripts build it from source, on the
+   reader's machine, as the CPU baseline the LLM pipeline example is compared against. No
+   source or binary of it is included here.
+
+7. Model weights and data sets
+
+   The demos download model weights and generate or fetch their own data sets. Each stays
+   under the licence its publisher states; none is redistributed in this repository.
