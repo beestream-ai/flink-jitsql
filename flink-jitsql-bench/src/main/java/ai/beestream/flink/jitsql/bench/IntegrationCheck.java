@@ -84,15 +84,15 @@ public final class IntegrationCheck {
                     // Refused on the device unless approximate-projections is set, which this
                     // deliberately does not set: see run(). Expect SAME (cpu).
                     new Case("calc-math", "SELECT id, SIN(v) + COS(v) AS trig FROM T"),
-                    new Case("order-by", "SELECT id, v FROM T ORDER BY v"),
-                    new Case("order-by-limit", "SELECT id, v FROM T ORDER BY v DESC LIMIT 100"),
+                    new Case("order-by", "SELECT id, v FROM T ORDER BY id"),
+                    new Case("order-by-limit", "SELECT id, v FROM T ORDER BY id DESC LIMIT 100"),
                     new Case("group-by", "SELECT k, SUM(v) AS s FROM T GROUP BY k"),
                     new Case(
                             "group-by-count",
                             "SELECT k, COUNT(*) AS n, SUM(v) AS s FROM T GROUP BY k"),
                     new Case(
                             "join",
-                            "SELECT a.id, a.v, b.k FROM T a JOIN U b ON a.k = b.k WHERE a.v > 0.5"),
+                            "SELECT a.id, a.v * 2.0 + 1.0 AS scaled, b.k FROM T a JOIN U b ON a.k = b.k"),
                     new Case(
                             "over-aggregate",
                             "SELECT id, k, SUM(v) OVER (PARTITION BY k ORDER BY id) AS run FROM T"));

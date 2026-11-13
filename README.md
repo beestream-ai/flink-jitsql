@@ -85,10 +85,20 @@ must end:
 CHECKS: 10, FAILURES: 0
 ```
 
-Each case says whether work reached the device, and when it did not, the planner's own
-reason — `a sort key of type DOUBLE NOT NULL is not ordered on device`, and so on. A
-case that agrees while nothing ran on the device has checked that the CPU equals the
-CPU; it says `SAME (cpu)` rather than counting as a device result.
+Each case says whether **the planner** put the subtree on the device, and when it did
+not, the planner's own reason — `a sort key of type DOUBLE NOT NULL is not ordered on
+device`, and so on. A case that agrees while the plan held nothing offloaded has checked
+that the CPU equals the CPU; it says `SAME (cpu)` rather than counting as a device result.
+
+`(device)` is the plan's verdict, not a runtime trace: the planner does not know whether
+this TaskManager has RAPIDS, so a cuDF-served operator is offloaded in the plan and
+declined at run time if the shim is missing. To watch the device actually execute one:
+
+```bash
+scripts/run-sql-demos.sh cudf-sort --printBytecodes
+```
+
+which prints `LAUNCH task - sort.order[sortedOrder] on [NVIDIA CUDA]`.
 
 If everything says `cpu`, run the smoke test before suspecting this code:
 
