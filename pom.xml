@@ -35,7 +35,11 @@ under the License.
 		discovers an accelerator through ServiceLoader and knows nothing about the one it finds:
 		not the framework, not the device API, not the vendor. Keeping the implementation in
 		Flink's own reactor contradicted that at the only level that matters -- the build -- by
-		making a clean checkout of Flink need an artifact that is not on Maven Central.
+		making Flink depend on a vendor runtime: a CUDA toolchain, a driver version floor, JVM
+		module-path requirements and a device API, none of which an extension point may impose on
+		everyone who checks Flink out. That the artifacts were also unpublished at the time was
+		the symptom people noticed; it has since been fixed and it changes nothing here. The
+		coupling is the reason, and the coupling is unchanged.
 	</description>
 
 	<modules>
@@ -242,7 +246,8 @@ under the License.
 								against whichever the classpath shadows. That is not theoretical —
 								it failed here as
 								NoSuchMethodError: Float2.set(I, FloatArray), from a signature that
-								changed between the pinned 6.0.1 and the 6.1.1 SDK on the machine.
+								changed between the version pinned at the time, 6.0.1, and the 6.1.1
+								SDK on the machine.
 								Excluding them makes the test JVM match production exactly, and is
 								also the only reason the cluster run worked where this did not.
 							-->
@@ -259,7 +264,7 @@ under the License.
 								Surefire turns assertions on by default. A TaskManager does not,
 								and TornadoVM has evidently not been run under -ea: registering the
 								CUDA vector plugins asserts that every method it binds resolves,
-								and 6.1.1's driver binds Float2.set(int, FloatArray), which no
+								and the 6.1.1 driver this was found on binds Float2.set(int, FloatArray), which no
 								tornado-api of any version declares. Under -ea that aborts backend
 								initialisation before a single kernel compiles; without it the
 								plugin is simply never used and everything works, which is what the

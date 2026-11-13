@@ -19,14 +19,14 @@ and a cluster without this jar simply runs everything on the CPU.
 
 ## Building
 
-Part of the default build. TornadoVM is not published to Maven Central, so build a TornadoVM
-distribution first -- its own build installs `tornado-api` and `tornado-annotation` into the local
-repository under the coordinates this module asks for, and nothing else is needed:
+Part of the default build, and TornadoVM comes from Maven Central, so nothing of TornadoVM's
+has to be built to compile this module or run its tests:
 
 ```bash
-cd $TORNADOVM_ROOT && bin/compile --jdk jdk21 --sdk --backend cuda
-cd $FLINK_ROOT     && ./mvnw clean install -DskipTests -Djdk21 -Pjava21-target
+cd $FLINK_ROOT && ./mvnw clean install -DskipTests -Djdk21 -Pjava21-target
 ```
+
+A TornadoVM SDK is needed to run on a device, not to build. See DEPLOYMENT.md.
 
 No profile or extra argument is needed. The module was originally behind a `-Pgpu` profile; that
 was removed because it kept the module out of the reactor and therefore out of IntelliJ's project

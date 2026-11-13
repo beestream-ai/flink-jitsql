@@ -43,9 +43,12 @@ cd TornadoVM && make BACKEND=cuda
 mvn install
 ```
 
-Change the SPI in Flink and Flink must be reinstalled before this builds. Change
-TornadoVM's version and `<tornado.version>` here has to match — the pom currently
-pins `6.1.1-jdk21-dev` against Flink `2.3.0`.
+Change the SPI in Flink and Flink must be reinstalled before this builds. The pom
+pins TornadoVM `8.1.0-jdk21` from Maven Central against Flink `2.3.0`, so nothing
+of TornadoVM's needs building to compile. The SDK deployed below must be the same
+version: a kernel's `writeReplace()` is emitted at compile time against a specific
+`tornado-api`, so a TaskManager running a different one fails at run time with
+"Kernel entry ... has no writeReplace()".
 
 **JDK 21.** TornadoVM's off-heap arrays are built on `java.lang.foreign`, preview
 on 21 and final on 22, and Flink 2.3 has no JDK 22+ profile — so 21 with preview
@@ -54,7 +57,7 @@ enabled is what a TaskManager running this actually runs on.
 ## Deploy
 
 ```bash
-TORNADOVM_HOME=/path/to/tornadovm-6.1.1-jdk21-dev-cuda \
+TORNADOVM_HOME=/path/to/tornadovm-8.1.0-jdk21-cuda \
   flink-accelerator-tornadovm/scripts/gpu-cluster-setup.sh $FLINK_HOME
 ```
 

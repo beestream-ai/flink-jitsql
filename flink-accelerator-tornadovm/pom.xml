@@ -70,8 +70,9 @@ under the License.
 			device buffers in one TaskGraph. Nothing in the Calc operator uses it, so a
 			distribution without it still runs every Calc.
 
-			It needs no JNI native of its own. TornadoVM 6 binds through java.lang.foreign and
+			It needs no JNI native of its own: TornadoVM binds through java.lang.foreign and
 			dlopens the system libcublas, so the only run-time requirement is a CUDA install.
+			Unlike the cuDF shim, this works with a released SDK.
 		-->
 		<dependency>
 			<groupId>io.github.beehive-lab</groupId>

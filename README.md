@@ -10,11 +10,16 @@ calibrated against a particular card.
 
 ## Why it is not part of Flink
 
-It was, and the build gave the coupling away: a clean checkout of Flink needed an
-artifact that is not on Maven Central, and the planner emitted
+It was, and the build gave the coupling away: Flink's own reactor depended on a
+vendor runtime — a CUDA toolchain, a driver floor, JVM module-path requirements
+— and the planner emitted
 `uk.ac.manchester.tornado.api.types.arrays.DoubleArray` into generated source. An
 extension point cannot be proposed on those terms, because the vendor *is* the
 interface.
+
+The artifacts were also unpublished then, and that is the part people noticed;
+TornadoVM has since published them to Maven Central and it changes nothing. A
+checkout of Flink still must not need a GPU toolchain to build.
 
 So the split is the point, not an accident of layout. Flink ships the work
 description; this ships the rate and the kernel.
@@ -25,9 +30,12 @@ description; this ships the rate and the kernel.
   interfaces this implements (`AcceleratorProvider`, `AccelNode`, the IR) exist
   only on the `gpu-offload` branch. Build that with `mvn install -DskipTests`
   first.
-- **TornadoVM 6.1.1-jdk21-dev**, built locally, matching `<tornado.version>` in
-  the pom. Its own build installs `tornado-api`, `tornado-annotation`,
-  `tornado-cublas` and `tornado-cudf` into `~/.m2`.
+- **TornadoVM 8.1.0**, from Maven Central. Nothing has to be built to compile
+  this or to run its tests. Running on a *device* is separate and needs an SDK
+  with the CUDA backend — `sdk install tornadovm 8.1.0-jdk21-cuda` is the
+  quickest. The cuDF path needs more than a released SDK: `libtornado-cudf.so`
+  is built only when `CUDF_HOME` is set at TornadoVM build time, so a released
+  SDK does not carry it and the operators that need it decline.
 - **JDK 21.** TornadoVM's off-heap arrays are built on `java.lang.foreign`, a
   preview API on 21 and final on 22; Flink 2.3 has no JDK 22+ profile, so
   21-with-preview is what a TaskManager running this actually runs on.
