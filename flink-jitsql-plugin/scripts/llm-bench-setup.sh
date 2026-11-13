@@ -305,7 +305,7 @@ if (( do_data )); then
     "$FLINK_HOME/bin/start-cluster.sh" >/dev/null
     until curl -s localhost:8081/overview 2>/dev/null | grep -q '"slots-available":1'; do sleep 2; done
     rm -rf "$WORK/readings"
-    "$FLINK_HOME/bin/flink" run -c org.apache.flink.table.examples.java.gpu.llm.GpuTriagePipeline \
+    "$FLINK_HOME/bin/flink" run -c ai.beestream.flink.jitsql.bench.llm.GpuTriagePipeline \
         "$JAR_PREFIX-GpuTriagePipeline.jar" --generate --rows "$ROWS" --machines "$MACHINES" \
         --data "$WORK/readings" 2>&1 | grep -E "writing|done in" || true
     "$FLINK_HOME/bin/stop-cluster.sh" >/dev/null

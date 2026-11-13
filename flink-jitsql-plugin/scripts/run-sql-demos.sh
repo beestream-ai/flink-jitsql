@@ -94,10 +94,10 @@ usage() {
 DEMO="${1:-}"
 shift || true
 case "${DEMO}" in
-    haversine)  MAIN=org.apache.flink.table.examples.java.gpu.HaversineSQLExample ;;
-    cudf-sort)  MAIN=org.apache.flink.table.examples.java.gpu.CudfSortSQLExample ;;
-    cudf-groupby) MAIN=org.apache.flink.table.examples.java.gpu.CudfGroupBySQLExample ;;
-    gram)       MAIN=org.apache.flink.table.examples.java.gpu.GramMatrixSQLExample ;;
+    haversine)  MAIN=ai.beestream.flink.jitsql.bench.HaversineSQLExample ;;
+    cudf-sort)  MAIN=ai.beestream.flink.jitsql.bench.CudfSortSQLExample ;;
+    cudf-groupby) MAIN=ai.beestream.flink.jitsql.bench.CudfGroupBySQLExample ;;
+    gram)       MAIN=ai.beestream.flink.jitsql.bench.GramMatrixSQLExample ;;
     *)          usage ;;
 esac
 
@@ -244,7 +244,7 @@ appender.console.layout.pattern = %-5p %c{1} - %m%n
 logger.decision.name = org.apache.flink.table.runtime.gpu
 logger.decision.level = ${DECISION_LEVEL}
 # The provider's own reasons, which are where a decline is explained.
-logger.provider.name = org.apache.flink.table.gpu
+logger.provider.name = ai.beestream.flink.jitsql
 logger.provider.level = ${PROVIDER_LEVEL}
 # Teardown noise. The MiniCluster stops as soon as the last row is collected, and the
 # fetcher then finds it gone and says so; it is not a failure and not a lost row.

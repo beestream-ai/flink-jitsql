@@ -1,0 +1,1760 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package ai.beestream.flink.jitsql.codegen;
+
+import org.apache.flink.table.accelerator.AccelCall;
+import org.apache.flink.table.accelerator.AccelExpression;
+import org.apache.flink.table.accelerator.AccelFilter;
+import org.apache.flink.table.accelerator.AccelFunction;
+import org.apache.flink.table.accelerator.AccelInputRef;
+import org.apache.flink.table.accelerator.AccelLiteral;
+import org.apache.flink.table.accelerator.AccelNode;
+import org.apache.flink.table.accelerator.AccelProject;
+import org.apache.flink.table.data.DecimalData;
+import org.apache.flink.table.data.DecimalDataUtils;
+import org.apache.flink.table.types.logical.DecimalType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.LogicalTypeRoot;
+
+import javax.annotation.Nullable;
+
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+
+/**
+ * Generates a TornadoVM kernel, as Java source, from an accelerator IR subtree.
+ *
+ * <p>This lived in {@code flink-table-planner} and read {@code RexNode}s, which meant core Flink's
+ * planner emitted {@code uk.ac.manchester.tornado} imports. No amount of tidying fixes that: it is
+ * the wrong direction of dependency, and it is the single thing that would have stopped the
+ * extension point being proposed as a FLIP. It now reads Flink's device-neutral IR instead, and
+ * lives with the provider that owns the device.
+ *
+ * <h2>Storage follows the column, arithmetic does not</h2>
+ *
+ * <p>Each staged column is held at its declared width — {@code IntArray}, {@code FloatArray} or
+ * {@code DoubleArray} — and widened to {@code double} on entry to the loop body, so the expression
+ * is evaluated in double whatever it reads. Only the buffer and the transfer follow the column.
+ * Reading a four-byte field with {@code getDouble} reads eight: an {@code INT} column holding 42
+ * once reached the device as 2.08e-322.
+ *
+ * <p><b>{@code BIGINT} is excluded as an expression input.</b> Values beyond 2^53 do not survive
+ * the round trip through a double. A {@code BIGINT} column may still be projected through: it never
+ * reaches the device and keeps its exact type.
+ *
+ * <h2>Filtering does not compact</h2>
+ *
+ * <p>A condition becomes a 0/1 mask written alongside the projections. Compacting on the device
+ * needs a prefix sum and a scatter — two more kernels and another buffer — whereas the host has to
+ * walk the results anyway to build output rows.
+ */
+public final class AccelKernelGenerator {
+
+    /**
+     * Words that are legal Java identifiers but reserved in OpenCL C.
+     *
+     * <p>TornadoVM translates the generated Java into OpenCL, so a name taken from this list fails
+     * late, inside the sketcher, with "Java method name corresponds to an OpenCL Token".
+     */
+    private static final Set<String> OPENCL_RESERVED =
+            new HashSet<>(
+                    Arrays.asList(
+                            "kernel",
+                            "global",
+                            "local",
+                            "constant",
+                            "private",
+                            "read_only",
+                            "write_only",
+                            "read_write",
+                            "uniform",
+                            "pipe",
+                            "half",
+                            "quad",
+                            "complex",
+                            "imaginary",
+                            "generic"));
+
+    private static final String INDENT = "        ";
+
+    /** Marks an output field produced by the kernel rather than copied from the input. */
+    public static final int COMPUTED = -1;
+
+    private AccelKernelGenerator() {}
+
+    /**
+     * Generates a kernel for a projection, optionally over a filter, or empty if any part of it
+     * cannot be written as one.
+     *
+     * <p>Returning empty is an ordinary outcome and is how this provider declines a subtree.
+     */
+    public static Optional<GpuKernelSource> generate(AccelNode subtree, String classNameSuffix) {
+        return generate(subtree, classNameSuffix, 0);
+    }
+
+    /**
+     * As above, optionally packing every computed column into one buffer {@code packedStride} rows
+     * apart, column-major.
+     *
+     * <p>Packing exists so a contraction over <em>k</em> columns is one task rather than
+     * <em>k</em>: a task takes a fixed argument list, so k separate output arrays force k separate
+     * reductions, and TornadoVM refuses to build a graph past about a hundred tasks.
+     */
+    public static Optional<GpuKernelSource> generate(
+            AccelNode subtree, String classNameSuffix, int packedStride) {
+        return generate(subtree, classNameSuffix, packedStride, 0);
+    }
+
+    /**
+     * As above, and optionally reading every staged column from one buffer too.
+     *
+     * <p>Packing the inputs is the mirror of packing the outputs and exists for a sharper reason
+     * than saving tasks: a kernel's parameter list grows with the column count, and past a few tens
+     * of arrays TornadoVM stops compiling the graph and deoptimises to sequential Java — silently,
+     * at execute time, with a library task in the graph that has no sequential implementation and
+     * therefore returns nothing. A Gram matrix over 32 features met that at 34 parameters. Packed,
+     * the kernel takes two arrays whatever the width.
+     *
+     * <p>Requires every staged column to be a {@code DOUBLE}, as packed output does: one buffer is
+     * one element type.
+     */
+    public static Optional<GpuKernelSource> generate(
+            AccelNode subtree, String classNameSuffix, int packedStride, int packedInputStride) {
+        return generate(subtree, classNameSuffix, packedStride, packedInputStride, NOTHING_EXTRA);
+    }
+
+    /** No column has to be staged beyond the ones the expressions read. */
+    private static final int[] NOTHING_EXTRA = new int[0];
+
+    /**
+     * As above, and staging {@code alsoStage} whether any expression reads it or not.
+     *
+     * <p>A projection's pass-through column is normally the host's business: the kernel never sees
+     * it, and {@code GpuCalcOperator} copies it beside the computed columns. That breaks down when
+     * something <em>on the device</em> needs it, and the grouped aggregate is exactly that case —
+     * {@code cudf::groupby} reads its key column out of device memory, so a query grouped by a
+     * plain column rather than a computed one has no key to group by.
+     *
+     * <p>Which is the ordinary shape of the query: {@code SELECT region, SUM(f(x)) GROUP BY region}
+     * groups by a column the scan read. Before this, that threw out of the provider and the whole
+     * query fell back to the CPU; only a computed key such as {@code id - (id / n) * n} worked,
+     * which is why the benchmarks did not catch it.
+     *
+     * <p>The staged column becomes a kernel parameter the kernel does not read. That costs a
+     * transfer of a column the device needs anyway and an unused argument in the generated source.
+     */
+    public static Optional<GpuKernelSource> generate(
+            AccelNode subtree,
+            String classNameSuffix,
+            int packedStride,
+            int packedInputStride,
+            int[] alsoStage) {
+
+        if (!(subtree instanceof AccelProject)) {
+            return Optional.empty();
+        }
+        if (hasNullable(subtree) && inputs32Exceeded(subtree)) {
+            // Validity is packed into one int a row, so 32 staged columns is the ceiling -- but
+            // only where there is a validity word at all. Refusing beyond it rather than silently
+            // widening: an expression over 33 columns would otherwise have its 33rd read someone
+            // else's bit. Over NOT NULL columns there are no bits to collide, and the cap was
+            // costing a Gram matrix over 64 features, which is exactly where it pays.
+            return Optional.empty();
+        }
+
+        AccelProject project = (AccelProject) subtree;
+        AccelNode input = project.inputs().get(0);
+        AccelExpression condition = null;
+        if (input instanceof AccelFilter) {
+            condition = ((AccelFilter) input).condition();
+            input = input.inputs().get(0);
+        }
+        // Anything deeper than Project-over-Filter-over-Input is a shape this generator has never
+        // been asked for; declining is the correct answer, not an error.
+        if (!input.inputs().isEmpty()) {
+            return Optional.empty();
+        }
+
+        NULLABLE_INPUTS.get().clear();
+        CSE.set(new Cse());
+        final Map<Integer, String> inputs = new LinkedHashMap<>();
+        final Map<Integer, GpuValueType> inputTypes = new LinkedHashMap<>();
+        final List<String> computed = new ArrayList<>();
+        final List<String> computedValidity = new ArrayList<>();
+        final List<GpuValueType> outputTypes = new ArrayList<>();
+        final int[] layout = new int[project.projections().size()];
+
+        for (int field = 0; field < project.projections().size(); field++) {
+            AccelExpression expression = project.projections().get(field);
+            if (expression instanceof AccelInputRef) {
+                layout[field] = ((AccelInputRef) expression).index();
+                continue;
+            }
+            layout[field] = COMPUTED;
+            if (!isDoubleResult(expression.outputType())) {
+                return Optional.empty();
+            }
+            if (floatNodeCannotRender(expression)) {
+                return Optional.empty();
+            }
+            // False: the column's own value is narrowed on the way out, so the root may wrap.
+            if (integerSemanticsDiffer(expression, false)) {
+                return Optional.empty();
+            }
+            Rendered rendered = render(expression, inputs, inputTypes);
+            if (rendered == null) {
+                return Optional.empty();
+            }
+            computed.add(rendered.value);
+            computedValidity.add(rendered.valid);
+            outputTypes.add(valueTypeOf(expression.outputType()));
+        }
+        if (computed.isEmpty()) {
+            // Nothing to compute; the CPU path already handles pure projection.
+            return Optional.empty();
+        }
+
+        for (int field : alsoStage) {
+            final AccelExpression source = passThroughOf(project, field);
+            if (source != null && source.outputType().isNullable()) {
+                // Refused rather than staged. A column reaches this loop because something
+                // above wants it carried through -- a grouping key -- and a column that is
+                // only carried is never rendered, so it never passes through the
+                // AccelInputRef arm that registers a nullable input. Staging it would leave
+                // carriesValidity() false with a nullable key in the batch, and the grouped
+                // aggregate's only null guard is exactly that flag: a NULL key would stage
+                // as the zeroed slot value and be summed into the group for 0, where Flink
+                // puts it in a group of its own.
+                //
+                // Declining is the sanctioned answer here, not a limitation worked around:
+                // the author is told to declare the column NOT NULL, which is the one thing
+                // a query author is asked to do for a region to be eligible.
+                return Optional.empty();
+            }
+            if (source == null || !isDoubleSafeInput(source.outputType())) {
+                // Asked to stage something this projection does not pass through, or a type the
+                // staging cannot hold. Declining is the caller's cue to fall back rather than
+                // produce a kernel whose key column is missing.
+                return Optional.empty();
+            }
+            inputTypes.putIfAbsent(field, valueTypeOf(source.outputType()));
+            inputs.computeIfAbsent(field, index -> "c" + index);
+        }
+
+        String renderedCondition = null;
+        if (condition != null) {
+            // True: a predicate reads its operands rather than narrowing them, so nothing under
+            // it may have wrapped.
+            if (integerSemanticsDiffer(condition, true)) {
+                return Optional.empty();
+            }
+            Rendered rendered = render(condition, inputs, inputTypes);
+            if (rendered == null) {
+                return Optional.empty();
+            }
+            // A comparison with an absent operand is UNKNOWN, and UNKNOWN does not select a row --
+            // so the condition's own validity ANDs into the mask rather than being checked
+            // separately. That is the whole of three-valued logic for a WHERE clause.
+            renderedCondition =
+                    rendered.alwaysPresent()
+                            ? rendered.value
+                            : "(" + rendered.valid + " != 0 && " + rendered.value + ")";
+        }
+        if (inputs.isEmpty()) {
+            // A kernel with no input column has nothing to size the parallel loop by.
+            return Optional.empty();
+        }
+
+        String className = "GpuCalcKernel$" + classNameSuffix;
+        String methodName = "evaluate";
+        if (OPENCL_RESERVED.contains(methodName.toLowerCase(Locale.ROOT))) {
+            throw new IllegalStateException(
+                    "generated method name collides with an OpenCL keyword");
+        }
+
+        int[] inputFields = inputs.keySet().stream().mapToInt(Integer::intValue).toArray();
+        GpuValueType[] stagedTypes = new GpuValueType[inputFields.length];
+        for (int i = 0; i < inputFields.length; i++) {
+            stagedTypes[i] = inputTypes.get(inputFields[i]);
+        }
+        // A packed buffer is one buffer, so it is one element type -- but that type may now be
+        // FLOAT as well as DOUBLE. Mixed widths are still refused: there is nowhere to put the
+        // narrower one that does not silently reinterpret the wider.
+        final GpuValueType packedOut = packedStride > 0 ? uniformType(outputTypes) : null;
+        if (packedStride > 0 && packedOut == null) {
+            return Optional.empty();
+        }
+        final GpuValueType packedIn =
+                packedInputStride > 0 ? uniformType(Arrays.asList(stagedTypes)) : null;
+        if (packedInputStride > 0 && packedIn == null) {
+            return Optional.empty();
+        }
+        boolean carriesValidity = carriesValidity(NULLABLE_INPUTS.get());
+        if (carriesValidity && computedValidity.size() > VALIDITY_BITS) {
+            // The output validity word is one int a row, exactly as the input one is, and
+            // renderClass packs bit i for computed column i. Java masks an int shift to five
+            // bits, so column 32 would write and read bit 0: a row with the first column
+            // absent would report the thirty-third absent too, and the thirty-third's own
+            // bit would land on the first. inputs32Exceeded guards the mirror case, but it
+            // counts staged input columns, which is a different set from the computed
+            // outputs counted here -- a projection of 33 expressions over 2 columns passes
+            // it and overflows this.
+            return Optional.empty();
+        }
+        String source =
+                renderClass(
+                        className,
+                        methodName,
+                        inputs,
+                        inputTypes,
+                        computed,
+                        computedValidity,
+                        NULLABLE_INPUTS.get(),
+                        outputTypes,
+                        renderedCondition,
+                        packedStride,
+                        packedInputStride,
+                        packedOut,
+                        packedIn,
+                        CSE.get().declarations());
+        return Optional.of(
+                new GpuKernelSource(
+                        className,
+                        methodName,
+                        source,
+                        inputFields,
+                        stagedTypes,
+                        outputTypes.toArray(new GpuValueType[0]),
+                        renderedCondition != null,
+                        layout,
+                        packedStride,
+                        packedInputStride,
+                        carriesValidity));
+    }
+
+    private static String renderClass(
+            String className,
+            String methodName,
+            Map<Integer, String> inputs,
+            Map<Integer, GpuValueType> inputTypes,
+            List<String> computed,
+            List<String> computedValidity,
+            Set<Integer> nullableInputs,
+            List<GpuValueType> outputTypes,
+            @Nullable String condition,
+            int packedStride,
+            int packedInputStride,
+            @Nullable GpuValueType packedOutType,
+            @Nullable GpuValueType packedInType,
+            List<String> subexpressions) {
+
+        Set<String> arrayTypes = new TreeSet<>();
+        for (GpuValueType type : inputTypes.values()) {
+            arrayTypes.add(type.arrayType());
+        }
+        if (packedInputStride > 0) {
+            arrayTypes.add(packedInType.arrayType());
+        }
+        if (packedStride > 0) {
+            arrayTypes.add(packedOutType.arrayType());
+        } else {
+            for (GpuValueType type : outputTypes) {
+                arrayTypes.add(type.arrayType());
+            }
+        }
+        // IntArray unconditionally: the live row count is one, whether or not there is a mask.
+        arrayTypes.add(GpuValueType.INT.arrayType());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("import uk.ac.manchester.tornado.api.annotations.Parallel;\n");
+        sb.append("import uk.ac.manchester.tornado.api.math.TornadoMath;\n");
+        for (String arrayType : arrayTypes) {
+            sb.append("import uk.ac.manchester.tornado.api.types.arrays.")
+                    .append(arrayType)
+                    .append(";\n");
+        }
+        sb.append("\n");
+        sb.append("public final class ").append(className).append(" {\n\n");
+        sb.append("    public static void ").append(methodName).append("(");
+
+        List<String> params = new ArrayList<>();
+        if (packedInputStride > 0) {
+            params.add(packedInType.arrayType() + " in");
+        } else {
+            for (Map.Entry<Integer, String> input : inputs.entrySet()) {
+                params.add(
+                        inputTypes.get(input.getKey()).arrayType()
+                                + " "
+                                + input.getValue()
+                                + "_in");
+            }
+        }
+        if (packedStride > 0) {
+            params.add(packedOutType.arrayType() + " out");
+        } else {
+            for (int i = 0; i < computed.size(); i++) {
+                params.add(outputTypes.get(i).arrayType() + " out" + i);
+            }
+        }
+        if (condition != null) {
+            params.add("IntArray mask");
+        }
+        // Validity, when anything in this kernel can be absent. One int a row, one bit a column,
+        // rather than one array per column: four bytes a row whatever the column count, against
+        // four bytes *per column* the naive way. On a path where every measurement so far is bound
+        // by moving the input, that difference is the design.
+        boolean carriesValidity = carriesValidity(nullableInputs);
+        if (carriesValidity) {
+            params.add("IntArray inNulls");
+            params.add("IntArray outNulls");
+        }
+        // Last, so the engine can append it without knowing what precedes it.
+        params.add("IntArray rows");
+        sb.append(String.join(", ", params)).append(") {\n");
+
+        // Bounded by the rows actually staged, not by the buffer's capacity.
+        //
+        // Capacity was the obvious bound and it is wrong in both directions. A partial batch --
+        // the last of every partition, and every batch of a partition smaller than one -- had the
+        // device evaluate the whole expression over the buffer's tail, which is the previous
+        // batch's data or, on the first batch, whatever the allocator left. The results were never
+        // read, so this was not a wrong answer; it was up to a full batch of arithmetic per
+        // partition spent on values that do not exist, and one INF or NAN away from becoming a
+        // wrong answer the moment anything downstream reads past the count.
+        //
+        // The count arrives in a one-element IntArray rather than as an int: a scalar argument is
+        // captured when the task graph is built and cannot then change, and this has to change on
+        // the last batch. An array is transferred on every execution.
+        sb.append("        final int n = rows.get(0);\n");
+        sb.append("        for (@Parallel int i = 0; i < n; i++) {\n");
+        if (carriesValidity) {
+            sb.append(INDENT).append("    final int nulls = inNulls.get(i);\n");
+            int bit = 0;
+            for (Integer index : inputs.keySet()) {
+                // The bit is the column's position among the staged columns, which is the same
+                // order the operator writes them in -- so the two cannot drift apart. Only a
+                // nullable column gets a variable; a NOT NULL one has nothing to read.
+                int position = bit++;
+                if (!nullableInputs.contains(index)) {
+                    continue;
+                }
+                // 1 means present, so the stored bit is inverted on the way in. Branchless: read
+                // once per row per column and combined with & thereafter.
+                sb.append(INDENT)
+                        .append("    final int v")
+                        .append(index)
+                        .append(" = 1 - ((nulls >>> ")
+                        .append(position)
+                        .append(") & 1);\n");
+            }
+        }
+        int column = 0;
+        for (Map.Entry<Integer, String> staged : inputs.entrySet()) {
+            final String var = staged.getValue();
+            // A FLOAT column is read into a float local so that an all-float chain stays float.
+            // Everything else -- DOUBLE, and INT, whose arithmetic the kernel does in double on
+            // purpose -- keeps the double local it has always had.
+            final boolean asFloat = inputTypes.get(staged.getKey()) == GpuValueType.FLOAT;
+            sb.append(INDENT)
+                    .append(asFloat ? "    float " : "    double ")
+                    .append(var)
+                    .append(" = ");
+            if (packedInputStride > 0) {
+                sb.append("in.get(").append(column * packedInputStride).append(" + i);\n");
+            } else {
+                sb.append(var).append("_in.get(i);\n");
+            }
+            column++;
+        }
+        // One statement per distinct operation, in the order they were produced -- which is
+        // bottom-up, so each one only mentions names already declared above it.
+        for (String declaration : subexpressions) {
+            sb.append(INDENT).append("    ").append(declaration).append("\n");
+        }
+        for (int i = 0; i < computed.size(); i++) {
+            if (packedStride > 0) {
+                sb.append(INDENT)
+                        .append("    out.set(")
+                        .append(i * packedStride)
+                        .append(" + i, ")
+                        .append(computed.get(i))
+                        .append(");\n");
+                continue;
+            }
+            GpuValueType outputType = outputTypes.get(i);
+            // The kernel computes in double; a narrower column is cast on the way out.
+            String open =
+                    outputType == GpuValueType.FLOAT
+                            ? "(float) ("
+                            // Through long, not straight to int. A double-to-int conversion in
+                            // Java saturates at Integer.MAX_VALUE; Flink's CPU evaluates INTEGER
+                            // arithmetic with Java int wraparound. SELECT i * 1000 at i =
+                            // 3000000 is -1294967296 on the CPU and was Integer.MAX_VALUE here.
+                            // Double-to-long is exact for every value this generator admits --
+                            // integerSemanticsDiffer holds them under 2^53 -- and long-to-int
+                            // keeps the low 32 bits, which is the wraparound itself. In range
+                            // the two spellings are identical, so this costs nothing where it
+                            // was already right.
+                            : outputType == GpuValueType.INT ? "(int) (long) (" : "";
+            boolean narrow = !open.isEmpty();
+            sb.append(INDENT)
+                    .append("    out")
+                    .append(i)
+                    .append(".set(i, ")
+                    .append(open)
+                    .append(computed.get(i))
+                    .append(narrow ? ")" : "")
+                    .append(");\n");
+        }
+        if (carriesValidity) {
+            // The value is written whatever its validity -- computing it costs nothing extra and
+            // branching to avoid it would cost divergence -- and the bit says whether to read it.
+            // Absent slots hold a benign value rather than whatever was there, so no INF, NAN or
+            // denormal arises from arithmetic on a row that does not exist.
+            StringBuilder packed = new StringBuilder();
+            for (int i = 0; i < computedValidity.size(); i++) {
+                if (i > 0) {
+                    packed.append(" | ");
+                }
+                packed.append("((1 - (")
+                        .append(computedValidity.get(i))
+                        .append(")) << ")
+                        .append(i)
+                        .append(")");
+            }
+            sb.append(INDENT)
+                    .append("    outNulls.set(i, ")
+                    .append(packed.length() == 0 ? "0" : packed.toString())
+                    .append(");\n");
+        }
+        if (condition != null) {
+            sb.append(INDENT).append("    if (").append(condition).append(") {\n");
+            sb.append(INDENT).append("        mask.set(i, 1);\n");
+            sb.append(INDENT).append("    } else {\n");
+            sb.append(INDENT).append("        mask.set(i, 0);\n");
+            sb.append(INDENT).append("    }\n");
+        }
+        sb.append("        }\n");
+        sb.append("    }\n");
+        sb.append("}\n");
+        return sb.toString();
+    }
+
+    /** Renders one expression, registering any column it reads. Null if it cannot be written. */
+    /** Bits in the validity word a row carries, for staged inputs and computed outputs alike. */
+    private static final int VALIDITY_BITS = 32;
+
+    /** More staged columns than one int of validity can describe. */
+    private static boolean inputs32Exceeded(AccelNode subtree) {
+        java.util.Set<Integer> referenced = new java.util.HashSet<>();
+        collectRefs(subtree, referenced);
+        return referenced.size() > VALIDITY_BITS;
+    }
+
+    private static void collectRefs(AccelNode node, java.util.Set<Integer> into) {
+        if (node instanceof AccelProject) {
+            for (AccelExpression e : ((AccelProject) node).projections()) {
+                collectRefs(e, into);
+            }
+        } else if (node instanceof AccelFilter) {
+            collectRefs(((AccelFilter) node).condition(), into);
+        }
+        for (AccelNode input : node.inputs()) {
+            collectRefs(input, into);
+        }
+    }
+
+    private static void collectRefs(AccelExpression expression, java.util.Set<Integer> into) {
+        if (expression instanceof AccelInputRef) {
+            into.add(((AccelInputRef) expression).index());
+        } else if (expression instanceof AccelCall) {
+            for (AccelExpression operand : ((AccelCall) expression).operands()) {
+                collectRefs(operand, into);
+            }
+        }
+    }
+
+    /** Whether this subtree contains an AND or an OR, whose null semantics are not strict. */
+    private static boolean hasThreeValuedLogic(AccelNode node) {
+        if (node instanceof AccelProject) {
+            for (AccelExpression e : ((AccelProject) node).projections()) {
+                if (hasThreeValuedLogic(e)) {
+                    return true;
+                }
+            }
+        } else if (node instanceof AccelFilter) {
+            if (hasThreeValuedLogic(((AccelFilter) node).condition())) {
+                return true;
+            }
+        }
+        for (AccelNode input : node.inputs()) {
+            if (hasThreeValuedLogic(input)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasThreeValuedLogic(AccelExpression expression) {
+        if (expression instanceof AccelCall) {
+            AccelCall call = (AccelCall) expression;
+            if (call.function() == AccelFunction.AND || call.function() == AccelFunction.OR) {
+                return true;
+            }
+            for (AccelExpression operand : call.operands()) {
+                if (hasThreeValuedLogic(operand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether anything in this subtree may be null, values or conditions alike. */
+    private static boolean hasNullable(AccelNode node) {
+        if (node instanceof AccelProject) {
+            for (AccelExpression e : ((AccelProject) node).projections()) {
+                if (hasNullable(e)) {
+                    return true;
+                }
+            }
+        } else if (node instanceof AccelFilter) {
+            if (hasNullable(((AccelFilter) node).condition())) {
+                return true;
+            }
+        }
+        for (AccelNode input : node.inputs()) {
+            if (hasNullable(input)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean hasNullable(AccelExpression expression) {
+        if (expression.outputType().isNullable()) {
+            return true;
+        }
+        if (expression instanceof AccelCall) {
+            for (AccelExpression operand : ((AccelCall) expression).operands()) {
+                if (hasNullable(operand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A rendered value, and the expression saying whether it is there.
+     *
+     * <p>Validity is an {@code int}: 1 present, 0 absent. An {@code int} rather than a {@code
+     * boolean} because it is combined with {@code &} far more often than it is branched on, and
+     * because the constant {@link #ALWAYS} then folds away in the emitted source — an expression
+     * over {@code NOT NULL} columns produces exactly the kernel it produced before validity
+     * existed, character for character.
+     */
+    /**
+     * Names every distinct subexpression once, so the kernel is straight-line code.
+     *
+     * <p>Without this the generator emits a tree, and a tree repeats itself. Calcite expands {@code
+     * LEAST(a, b, c, ...)} into nested conditionals that mention each operand several times over --
+     * once for a null test, once per comparison, once per branch -- so a twenty-argument {@code
+     * LEAST} over an expression of any size produces source that grows far faster than the
+     * operation count the cost model sees. Measured 2026-09-17: the haversine benchmark at {@code
+     * --depots 20} rendered to over 20 000 characters and javac rejected it, while the planner
+     * counted 359 operations. Naming each subexpression as it is produced makes the emitted size
+     * proportional to the distinct operations, which is what the cost model already counts.
+     *
+     * <p>It also reads better, which is not the point but is worth having: every statement is one
+     * operation, which is what a reader of a generated kernel wants to see.
+     */
+    private static final class Cse {
+        private final Map<String, String> byExpression = new LinkedHashMap<>();
+        private final List<String> declarations = new ArrayList<>();
+        private int next;
+
+        /** The name standing for this expression, declaring it the first time it is seen. */
+        String name(String expression, String javaType) {
+            String existing = byExpression.get(expression);
+            if (existing != null) {
+                return existing;
+            }
+            String name = "t" + next++;
+            byExpression.put(expression, name);
+            declarations.add("final " + javaType + " " + name + " = " + expression + ";");
+            return name;
+        }
+
+        List<String> declarations() {
+            return declarations;
+        }
+    }
+
+    /**
+     * The subexpression names for the kernel being generated.
+     *
+     * <p>A thread local for the same reason {@link #NULLABLE_INPUTS} is one: rendering is a static
+     * recursion and threading a context through every arm of it would say nothing the name does
+     * not.
+     */
+    private static final ThreadLocal<Cse> CSE = ThreadLocal.withInitial(Cse::new);
+
+    private static final class Rendered {
+        static final String ALWAYS = "1";
+
+        final String value;
+        final String valid;
+
+        Rendered(String value, String valid) {
+            this.value = value;
+            this.valid = valid;
+        }
+
+        boolean alwaysPresent() {
+            return ALWAYS.equals(valid);
+        }
+    }
+
+    /**
+     * {@code AND} and {@code OR} under SQL's three-valued logic.
+     *
+     * <p>Folded left over the operands, two at a time, because the rule is binary and n-ary {@code
+     * AND} is just that rule applied repeatedly.
+     *
+     * <p>For {@code AND}: the result is present when both operands are present, <em>or</em> when
+     * either is present and false — because a false decides the answer whatever the other operand
+     * turns out to be. The value is the ordinary conjunction of the two, with an absent operand
+     * read as true so that it cannot turn a decided false into a true.
+     *
+     * <p>{@code OR} is the mirror image, with true as the deciding value.
+     */
+    private static Rendered renderLogical(boolean and, List<Rendered> operands) {
+        Rendered result = operands.get(0);
+        for (int i = 1; i < operands.size(); i++) {
+            result = renderLogicalPair(and, result, operands.get(i));
+        }
+        return result;
+    }
+
+    private static Rendered renderLogicalPair(boolean and, Rendered left, Rendered right) {
+        if (left.alwaysPresent() && right.alwaysPresent()) {
+            // Nothing can be absent, so this is ordinary boolean logic and emits as such.
+            return new Rendered(
+                    "(" + left.value + (and ? " && " : " || ") + right.value + ")",
+                    Rendered.ALWAYS);
+        }
+        // "Decided" means this operand alone settles the answer: false for AND, true for OR.
+        String leftDecides = decides(and, left);
+        String rightDecides = decides(and, right);
+        String valid =
+                "((("
+                        + left.valid
+                        + " & "
+                        + right.valid
+                        + ") != 0 || "
+                        + leftDecides
+                        + " || "
+                        + rightDecides
+                        + ") ? 1 : 0)";
+        // An absent operand reads as the non-deciding value, so it cannot overturn a decided one.
+        String leftValue = neutral(and, left);
+        String rightValue = neutral(and, right);
+        String value = "(" + leftValue + (and ? " && " : " || ") + rightValue + ")";
+        return new Rendered(value, valid);
+    }
+
+    /** Whether this operand is present and holds the value that settles the answer on its own. */
+    private static String decides(boolean and, Rendered operand) {
+        String settling = and ? "!" : "";
+        if (operand.alwaysPresent()) {
+            return "(" + settling + operand.value + ")";
+        }
+        return "(" + operand.valid + " != 0 && " + settling + operand.value + ")";
+    }
+
+    /** This operand's value, with an absent one read as the value that decides nothing. */
+    private static String neutral(boolean and, Rendered operand) {
+        if (operand.alwaysPresent()) {
+            return operand.value;
+        }
+        return "("
+                + operand.valid
+                + " == 0 ? "
+                + (and ? "true" : "false")
+                + " : "
+                + operand.value
+                + ")";
+    }
+
+    /** {@code a & b & ...}, or the constant 1 when nothing can be absent. */
+    private static String andValidity(List<Rendered> operands) {
+        List<String> terms = new ArrayList<>();
+        for (Rendered r : operands) {
+            if (!r.alwaysPresent()) {
+                terms.add(r.valid);
+            }
+        }
+        if (terms.isEmpty()) {
+            return Rendered.ALWAYS;
+        }
+        return terms.size() == 1 ? terms.get(0) : "(" + String.join(" & ", terms) + ")";
+    }
+
+    /**
+     * Whether this kernel needs to move validity at all.
+     *
+     * <p>False for an expression over {@code NOT NULL} columns, and then the emitted source is
+     * character-for-character what it was before validity existed — no extra parameter, no extra
+     * transfer, no extra instruction. That is deliberate: declaring {@code NOT NULL} stays the
+     * cheaper path rather than merely the older one.
+     */
+    private static boolean carriesValidity(Set<Integer> nullableInputs) {
+        return !nullableInputs.isEmpty();
+    }
+
+    /**
+     * Staged columns that may be absent, collected while rendering.
+     *
+     * <p>Not derivable from the projections alone, which is what the first version tried: a
+     * predicate over a nullable column with a projection over a {@code NOT NULL} one produces no
+     * nullable <em>output</em>, and the kernel still has to read a validity bit to evaluate the
+     * predicate. That generated {@code v0} against a signature with no {@code inNulls} in it, and
+     * failed to compile -- loudly, which is the one merciful thing about it.
+     */
+    private static final ThreadLocal<Set<Integer>> NULLABLE_INPUTS =
+            ThreadLocal.withInitial(LinkedHashSet::new);
+
+    /** The pass-through projection reading this input field, or null if there is none. */
+    private static @Nullable AccelExpression passThroughOf(AccelProject project, int inputField) {
+        for (AccelExpression expression : project.projections()) {
+            if (expression instanceof AccelInputRef
+                    && ((AccelInputRef) expression).index() == inputField) {
+                return expression;
+            }
+        }
+        return null;
+    }
+
+    private static @Nullable Rendered render(
+            AccelExpression node, Map<Integer, String> inputs, Map<Integer, GpuValueType> types) {
+        if (node instanceof AccelInputRef) {
+            AccelInputRef ref = (AccelInputRef) node;
+            if (!isDoubleSafeInput(ref.outputType())) {
+                return null;
+            }
+            types.putIfAbsent(ref.index(), valueTypeOf(ref.outputType()));
+            String name = inputs.computeIfAbsent(ref.index(), index -> "c" + index);
+            if (!ref.outputType().isNullable()) {
+                // A column declared NOT NULL carries no validity and costs nothing to read.
+                return new Rendered(name, Rendered.ALWAYS);
+            }
+            NULLABLE_INPUTS.get().add(ref.index());
+            return new Rendered(name, "v" + ref.index());
+        }
+        if (node instanceof AccelLiteral) {
+            Object value = ((AccelLiteral) node).value();
+            if (value == null) {
+                // A literal NULL is representable, but every use of one is a constant this kernel
+                // would be computing for no reason; the planner folds them away long before here.
+                return null;
+            }
+            if (value instanceof Boolean) {
+                return new Rendered(value.toString(), Rendered.ALWAYS);
+            }
+            if (!(value instanceof Number)) {
+                return null;
+            }
+            double d = asFlinkDouble(value, node.outputType());
+            if (!Double.isFinite(d)) {
+                return null;
+            }
+            // Double.toString round-trips exactly, so the constant the kernel sees is the constant
+            // the planner folded.
+            //
+            // A FLOAT literal is emitted with the f suffix and not merely narrowed. Without it the
+            // constant is a double in Java, which promotes the whole expression around it back to
+            // double -- the kernel would then compute in double and narrow once at the end, which
+            // is exactly the wrong answer this generator used to produce for FLOAT.
+            if (node.outputType().getTypeRoot() == LogicalTypeRoot.FLOAT) {
+                final float f = (float) d;
+                if (!Float.isFinite(f)) {
+                    return null;
+                }
+                return new Rendered(Float.toString(f) + "f", Rendered.ALWAYS);
+            }
+            return new Rendered(Double.toString(d), Rendered.ALWAYS);
+        }
+        AccelCall call = (AccelCall) node;
+        List<Rendered> operands = new ArrayList<>(call.operands().size());
+        for (AccelExpression operand : call.operands()) {
+            Rendered rendered = render(operand, inputs, types);
+            if (rendered == null) {
+                return null;
+            }
+            operands.add(rendered);
+        }
+
+        // AND and OR are the one place "absent in, absent out" is wrong, and getting it wrong
+        // changes a row count rather than failing. SQL's three-valued truth tables:
+        //
+        //     FALSE AND UNKNOWN = FALSE        TRUE  OR UNKNOWN = TRUE
+        //     TRUE  AND UNKNOWN = UNKNOWN      FALSE OR UNKNOWN = UNKNOWN
+        //
+        // So an absent operand does not make the result absent when the other operand already
+        // decides it. Value and validity have to be computed together, which is why these two are
+        // handled here rather than falling through to the strict rule below.
+        if (call.function() == AccelFunction.AND || call.function() == AccelFunction.OR) {
+            return named(renderLogical(call.function() == AccelFunction.AND, operands), "boolean");
+        }
+
+        // IS NULL and IS NOT NULL read a validity bit rather than propagating one, and their own
+        // answer is never absent -- which is the whole of what makes them useful in a WHERE clause
+        // over a nullable column.
+        if (call.function() == AccelFunction.IS_NULL) {
+            return named(
+                    new Rendered("(" + operands.get(0).valid + " == 0)", Rendered.ALWAYS),
+                    "boolean");
+        }
+        if (call.function() == AccelFunction.IS_NOT_NULL) {
+            return named(
+                    new Rendered("(" + operands.get(0).valid + " != 0)", Rendered.ALWAYS),
+                    "boolean");
+        }
+
+        List<String> values = new ArrayList<>(operands.size());
+        for (Rendered r : operands) {
+            values.add(r.value);
+        }
+        // SQL widens a FLOAT operand to DOUBLE at the operator, then applies it. Java would
+        // multiply two floats in float and widen the product afterwards, which rounds once in the
+        // wrong place. Casting here puts the promotion where SQL puts it.
+        if (call.outputType().getTypeRoot() != LogicalTypeRoot.FLOAT
+                && !isBooleanResult(call.outputType())) {
+            for (int i = 0; i < call.operands().size() && i < values.size(); i++) {
+                if (call.operands().get(i).outputType().getTypeRoot() == LogicalTypeRoot.FLOAT) {
+                    values.set(i, "((double) " + values.get(i) + ")");
+                }
+            }
+        }
+        String rendered = renderCall(call, values);
+        if (rendered == null) {
+            return null;
+        }
+        // Every other operator here is strict: absent in, absent out. AND and OR are not, and are
+        // handled above, where three-valued logic computes value and validity together.
+        return named(new Rendered(rendered, andValidity(operands)), javaTypeOf(call.outputType()));
+    }
+
+    /**
+     * Gives this subexpression a name, so a second occurrence of it emits the name rather than the
+     * expression again. See {@link Cse}.
+     *
+     * <p>A rendering that is already a bare name -- a staged column, a folded constant, the
+     * always-present validity -- is left alone: naming it would add a line and save nothing.
+     */
+    private static Rendered named(Rendered rendered, String javaType) {
+        Cse cse = CSE.get();
+        String value = isName(rendered.value) ? rendered.value : cse.name(rendered.value, javaType);
+        String valid =
+                rendered.alwaysPresent() || isName(rendered.valid)
+                        ? rendered.valid
+                        : cse.name(rendered.valid, "int");
+        return new Rendered(value, valid);
+    }
+
+    /**
+     * A literal as the double <em>Flink</em> would use, which is not always the nearest one.
+     *
+     * <h2>Why this is not {@code Number.doubleValue()}</h2>
+     *
+     * <p>A bare decimal in SQL is a {@code DECIMAL}, and Flink converts one to a double in {@code
+     * DecimalDataUtils.doubleValue}. For a compact decimal — precision 18 or less, held as a {@code
+     * long} — that is {@code ((double) unscaledLong) / POW10[scale]}: a double division, which
+     * rounds, and which is therefore <b>not the correctly rounded value of the decimal</b>. {@code
+     * BigDecimal.doubleValue()} is correctly rounded. The two differ for some literals and not
+     * others.
+     *
+     * <p>Traced from a whole-population disagreement, 2026-09-23. In a screen over 10M rows, one
+     * probe constant disagreed on <em>every</em> row while seven others agreed exactly:
+     *
+     * <pre>
+     *   0.9909456437464825   correctly rounded -> 0.9909456437464825
+     *                        Flink's division  -> 0.9909456437464824   (1 ulp lower)
+     *   0.3729116549965876   both              -> 0.3729116549965876   (agree, by luck of the digits)
+     * </pre>
+     *
+     * <p>That is the whole of the "DECIMAL" discrepancy chased through this document. It was never
+     * about {@code LEAST}, about expression size, or about decimal arithmetic composing: those were
+     * artefacts of which constants happened to be in which query. It is one conversion, in one
+     * place, and the kernel was using the mathematically better one.
+     *
+     * <p>Flink's CPU is the reference, so the kernel matches it — by calling Flink's own conversion
+     * rather than reimplementing the rounding, which would be a second place to get it wrong.
+     */
+    private static double asFlinkDouble(Object value, LogicalType declared) {
+        if (declared instanceof DecimalType && value instanceof BigDecimal) {
+            final DecimalType type = (DecimalType) declared;
+            final DecimalData asFlink =
+                    DecimalData.fromBigDecimal(
+                            (BigDecimal) value, type.getPrecision(), type.getScale());
+            if (asFlink != null) {
+                return DecimalDataUtils.doubleValue(asFlink);
+            }
+        }
+        return ((Number) value).doubleValue();
+    }
+
+    /** Whether this rendering is already a single identifier or literal. */
+    private static boolean isName(String rendered) {
+        if (rendered.isEmpty()) {
+            return true;
+        }
+        for (int i = 0; i < rendered.length(); i++) {
+            char c = rendered.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_' && c != '.') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean isBooleanResult(org.apache.flink.table.types.logical.LogicalType type) {
+        return type.getTypeRoot() == org.apache.flink.table.types.logical.LogicalTypeRoot.BOOLEAN;
+    }
+
+    private static @Nullable String renderCall(AccelCall call, List<String> operands) {
+        switch (call.function()) {
+            case PLUS:
+                return infix(operands, "+");
+            case MINUS:
+                return infix(operands, "-");
+            case TIMES:
+                return infix(operands, "*");
+            case DIVIDE:
+                return infix(operands, "/");
+            case INT_DIVIDE:
+                return truncating(call, operands, false);
+            case MOD:
+                return truncating(call, operands, true);
+            case NEGATE:
+                return operands.size() == 1 ? "(-" + operands.get(0) + ")" : null;
+            case GREATER_THAN:
+                return comparison(call, operands, ">");
+            case GREATER_OR_EQUAL:
+                return comparison(call, operands, ">=");
+            case LESS_THAN:
+                return comparison(call, operands, "<");
+            case LESS_OR_EQUAL:
+                return comparison(call, operands, "<=");
+            case EQUALS:
+                return comparison(call, operands, "==");
+            case NOT_EQUALS:
+                return comparison(call, operands, "!=");
+            case AND:
+                return infix(operands, "&&");
+            case OR:
+                return infix(operands, "||");
+            case NOT:
+                return operands.size() == 1 ? "(!" + operands.get(0) + ")" : null;
+            case CAST:
+                // Every value here is already a double, so a widening numeric cast is a no-op.
+                // Narrowing casts must raise on overflow and a kernel cannot, so the planner
+                // refuses them before they arrive.
+                return operands.size() == 1 ? operands.get(0) : null;
+            case LEAST:
+            case GREATEST:
+                return foldOrdering(call, operands);
+            default:
+                return renderMath(call, operands);
+        }
+    }
+
+    /**
+     * LEAST and GREATEST, matching Flink's ordering rather than {@code TornadoMath.min}.
+     *
+     * <p>Flink folds these with {@code Double.compareTo}, whose total order places NaN above every
+     * other value: NaN wins GREATEST and loses LEAST. {@code min} and {@code max} propagate it
+     * instead, so a kernel using them returned a different answer from the CPU plan for any row
+     * where an operand was NaN — which SQRT of a negative produces routinely.
+     *
+     * <p>One divergence remains and is deliberate: {@code compareTo} orders {@code -0.0} below
+     * {@code 0.0} and {@code <} does not. Recovering the sign of a zero needs a reciprocal
+     * comparison, which is a division per comparison in every kernel using LEAST.
+     */
+    private static @Nullable String foldOrdering(AccelCall call, List<String> operands) {
+        if (operands.size() < 2 || !isDoubleResult(call.outputType())) {
+            return null;
+        }
+        boolean least = call.function() == org.apache.flink.table.accelerator.AccelFunction.LEAST;
+        String folded = operands.get(0);
+        for (int i = 1; i < operands.size(); i++) {
+            String next = operands.get(i);
+            String step =
+                    least
+                            ? "((" + next + " != " + next + " || " + folded + " < " + next + ") ? "
+                                    + folded + " : " + next + ")"
+                            : "((" + folded + " != " + folded + " || " + folded + " > " + next
+                                    + ") ? " + folded + " : " + next + ")";
+            // Named at every step, and this is the step that matters. The accumulator appears
+            // three times in the expression above (four for GREATEST), so folding it inline
+            // triples the text on each operand: a twenty-argument LEAST reached 861 MB of source
+            // before this, and 18.9 MB once the operands themselves were named but the fold was
+            // not. Naming each step makes it one statement per operand. Measured 2026-09-17.
+            folded = CSE.get().name(step, javaTypeOf(call.outputType()));
+        }
+        return folded;
+    }
+
+    /**
+     * Integer division and remainder, truncated toward zero as SQL means them.
+     *
+     * <p>A kernel computing in double answers 3.5 where SQL answers 3, so the truncation is written
+     * out rather than left to the result type. Exact for every operand an integral column can hold
+     * below 2^53.
+     *
+     * <p><b>Only with a non-zero literal divisor.</b> SQL raises on division by zero and a kernel
+     * cannot: {@code a / 0.0} is infinity, and {@code (long)} of that is a number. Refusing unless
+     * the divisor is a literal that is plainly not zero keeps a wrong answer from being possible,
+     * and covers what these are actually used for -- {@code MOD(id, 1000)} and the like. A computed
+     * divisor falls back to the CPU, where SQL's error is raised properly.
+     */
+    private static @Nullable String truncating(
+            AccelCall call, List<String> operands, boolean remainder) {
+        if (operands.size() != 2 || !nonZeroLiteral(call.operands().get(1))) {
+            return null;
+        }
+        String quotient = "((double) (long) (" + operands.get(0) + " / " + operands.get(1) + "))";
+        return remainder
+                ? "(" + operands.get(0) + " - (" + quotient + " * " + operands.get(1) + "))"
+                : quotient;
+    }
+
+    /** Whether this operand is a literal number that is certainly not zero. */
+    private static boolean nonZeroLiteral(AccelExpression expression) {
+        if (!(expression instanceof AccelLiteral)) {
+            return false;
+        }
+        Object value = ((AccelLiteral) expression).value();
+        return value instanceof Number && ((Number) value).doubleValue() != 0.0;
+    }
+
+    /**
+     * Maps the remaining functions onto {@code TornadoMath}, which is what compiles to a device.
+     */
+    private static @Nullable String renderMath(AccelCall call, List<String> operands) {
+        String fn;
+        int arity = 1;
+        switch (call.function()) {
+            case ABS:
+                fn = "abs";
+                break;
+            case SQRT:
+                fn = "sqrt";
+                break;
+            case EXP:
+                fn = "exp";
+                break;
+            case LN:
+                fn = "log";
+                break;
+            case LOG2:
+                fn = "log2";
+                break;
+            case SIN:
+                fn = "sin";
+                break;
+            case COS:
+                fn = "cos";
+                break;
+            case TAN:
+                fn = "tan";
+                break;
+            case ASIN:
+                fn = "asin";
+                break;
+            case ACOS:
+                fn = "acos";
+                break;
+            case ATAN:
+                fn = "atan";
+                break;
+            case TANH:
+                fn = "tanh";
+                break;
+            case FLOOR:
+                fn = "floor";
+                break;
+            case CEIL:
+                fn = "ceil";
+                break;
+            case SIGN:
+                fn = "signum";
+                break;
+            case POWER:
+                fn = "pow";
+                arity = 2;
+                break;
+            case ATAN2:
+                fn = "atan2";
+                arity = 2;
+                break;
+            default:
+                return null;
+        }
+        if (operands.size() != arity) {
+            return null;
+        }
+        return "TornadoMath." + fn + "(" + String.join(", ", operands) + ")";
+    }
+
+    /**
+     * A comparison, in whichever of SQL's two orderings Flink would have used for these operands.
+     *
+     * <h2>There are two, and the SQL does not show which</h2>
+     *
+     * <p>{@code WHERE val > 0.5} and {@code WHERE val > CAST(0.5 AS DOUBLE)} are not the same
+     * predicate. A bare literal is {@code DECIMAL}, and {@code
+     * ScalarOperatorGens.generateComparisonSameType} takes its decimal branch whenever either
+     * operand is one, emitting {@code DecimalDataUtils.compare(l, r) op 0} — which for an
+     * approximate numeric against a decimal is {@code Double.compare}, a <b>total order</b> in
+     * which NaN is greater than everything and equal to itself, and {@code -0.0} is strictly less
+     * than {@code 0.0}. Written as a {@code DOUBLE}, the same predicate is ordinary IEEE, where
+     * every comparison involving NaN is false and the two zeros are equal.
+     *
+     * <p>Generating IEEE for both is a changed query result, not a rounding difference: a row whose
+     * value is NaN is kept by Flink and dropped by the kernel. {@code AcceleratorConformanceIT}
+     * found it, and the IR needed nothing new to fix it — the literal already carries its declared
+     * type.
+     *
+     * <h2>Why this is a handful of extra terms and not a compare function</h2>
+     *
+     * <p>{@code Double.compare} is not available in a kernel, and a general total-order comparison
+     * of two arbitrary doubles needs NaN tests and signed-zero tests on <em>both</em> sides. It is
+     * not needed: a {@code DECIMAL} operand here is always a literal, because a decimal column
+     * cannot be staged at all. A literal is a compile-time constant, is never NaN, and is never
+     * {@code -0.0} — {@code BigDecimal} has no negative zero. So only the other side can carry
+     * either, and each operator needs at most two extra terms, both of which fold away when the
+     * literal is not zero.
+     */
+    private static @Nullable String comparison(AccelCall call, List<String> operands, String op) {
+        if (operands.size() != 2 || call.operands().size() != 2) {
+            return null;
+        }
+        int literalSide = decimalLiteralSide(call);
+        if (literalSide < 0) {
+            // No decimal operand, so Flink compares the two numerics with IEEE rules -- but the
+            // rendering still has to be the NaN-safe one. See ordered().
+            return ordered(operands.get(0), operands.get(1), op);
+        }
+        String value = operands.get(1 - literalSide);
+        String literal = operands.get(literalSide);
+        String effective = literalSide == 0 ? reversed(op) : op;
+        if (effective == null) {
+            return null;
+        }
+        boolean zero = isZeroLiteral(call.operands().get(literalSide));
+        boolean nanPossible = isApproximate(call.operands().get(1 - literalSide).outputType());
+
+        // Written as (value effective literal), so the literal is always on the right below.
+        String ieee = ordered(value, literal, effective);
+        String equal = "(" + value + " == " + literal + ")";
+        String isNan = "(" + value + " != " + value + ")";
+        String isNegativeZero = "(" + value + " == 0.0 && (1.0 / " + value + ") < 0.0)";
+        String equalTotal = zero ? "(" + equal + " && !" + isNegativeZero + ")" : equal;
+
+        switch (effective) {
+            case ">":
+                // -0.0 is not greater than +0.0 under either ordering, so only NaN moves.
+                return nanPossible ? "(" + ieee + " || " + isNan + ")" : ieee;
+            case ">=":
+                String ge = zero ? "(" + ieee + " && !" + isNegativeZero + ")" : ieee;
+                return nanPossible ? "(" + ge + " || " + isNan + ")" : ge;
+            case "<":
+                // NaN is greatest, so it is below nothing; only the signed zero moves.
+                return zero ? "(" + ieee + " || " + isNegativeZero + ")" : ieee;
+            case "<=":
+                // Unchanged: NaN is already false under IEEE, and -0.0 <= 0.0 holds in both.
+                return ieee;
+            case "==":
+                return equalTotal;
+            case "!=":
+                return "(!" + equalTotal + ")";
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * A comparison written so that NaN answers false, whatever the device compiler lowers it to.
+     *
+     * <h2>{@code >=} and {@code <=} cannot be emitted as themselves</h2>
+     *
+     * <p>Measured on an RTX 4070 through TornadoVM's CUDA backend: a kernel containing {@code a >=
+     * b} <b>keeps</b> the rows where {@code a} is NaN, and so does {@code a <= b}. Both are false
+     * in Java and in IEEE 754. The lowering is the ordinary one — {@code a >= b} becomes {@code !(a
+     * < b)}, which is {@code !false} and therefore true when either operand is unordered — and it
+     * is the reason a device comparison cannot simply be the Java operator spelled out.
+     *
+     * <p>{@code >} and {@code <} do not have the problem, because the unordered case is already
+     * their false answer. So the fix is to say {@code >=} as "greater or equal" rather than "not
+     * less": {@code (a > b || a == b)} is unordered-false under any lowering of its three parts.
+     *
+     * <p>The cost is one extra comparison on two of the six operators, in a kernel that is bound by
+     * reading its input. The alternative was a filter that silently kept every NaN row, which is a
+     * wrong answer of exactly the kind no row count catches.
+     */
+    private static String ordered(String left, String right, String op) {
+        switch (op) {
+            case ">=":
+                return "((" + left + " > " + right + ") || (" + left + " == " + right + "))";
+            case "<=":
+                return "((" + left + " < " + right + ") || (" + left + " == " + right + "))";
+            case "!=":
+                // Also stated through equality, so it cannot be lowered to an ordered test either.
+                return "(!(" + left + " == " + right + "))";
+            default:
+                return "(" + left + " " + op + " " + right + ")";
+        }
+    }
+
+    /** Which operand is a {@code DECIMAL} literal, or -1 when neither is. */
+    private static int decimalLiteralSide(AccelCall call) {
+        for (int i = 0; i < call.operands().size(); i++) {
+            AccelExpression operand = call.operands().get(i);
+            if (operand instanceof AccelLiteral
+                    && operand.outputType().getTypeRoot() == LogicalTypeRoot.DECIMAL) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean isZeroLiteral(AccelExpression literal) {
+        Object value = ((AccelLiteral) literal).value();
+        return value instanceof Number && ((Number) value).doubleValue() == 0.0;
+    }
+
+    /** Whether a NaN can reach this side at all. An integral column cannot carry one. */
+    private static boolean isApproximate(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case FLOAT:
+            case DOUBLE:
+            case DECIMAL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** The same comparison written with its operands the other way round. */
+    private static @Nullable String reversed(String op) {
+        switch (op) {
+            case ">":
+                return "<";
+            case ">=":
+                return "<=";
+            case "<":
+                return ">";
+            case "<=":
+                return ">=";
+            case "==":
+            case "!=":
+                return op;
+            default:
+                return null;
+        }
+    }
+
+    private static @Nullable String infix(List<String> operands, String op) {
+        if (operands.size() < 2) {
+            return null;
+        }
+        // Fully parenthesised: the tree already encodes precedence.
+        return "(" + String.join(" " + op + " ", operands) + ")";
+    }
+
+    private static GpuValueType valueTypeOf(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case INTEGER:
+                return GpuValueType.INT;
+            case FLOAT:
+                return GpuValueType.FLOAT;
+            case DOUBLE:
+                return GpuValueType.DOUBLE;
+            default:
+                throw new IllegalStateException("no staging width for " + type);
+        }
+    }
+
+    private static boolean isDoubleSafeInput(LogicalType type) {
+        LogicalTypeRoot root = type.getTypeRoot();
+        return root == LogicalTypeRoot.DOUBLE
+                || root == LogicalTypeRoot.FLOAT
+                || root == LogicalTypeRoot.INTEGER;
+    }
+
+    /**
+     * Result types a computed column may have.
+     *
+     * <p>{@code INTEGER} joins {@code DOUBLE} because a grouping key is usually one, and refusing
+     * it refused the whole projection beside it -- a `GROUP BY` query offloaded nothing however
+     * expressible its arithmetic was. The kernel still computes in double and narrows on the way
+     * out, which is exact for every int: the arithmetic that produced it is integral, and integral
+     * arithmetic below 2^53 is exact in a double.
+     *
+     * <p>{@code BIGINT} is deliberately absent. It is not exact above 2^53 and a kernel has no way
+     * to say so.
+     *
+     * <p>{@code FLOAT} was refused until 2026-10-01, and the reason is worth keeping. This
+     * generator evaluated every expression in double and narrowed a {@code FLOAT} result once at
+     * the end, which is not what Flink does: Flink evaluates float arithmetic in float and rounds
+     * at <em>every</em> step. The two agree for a single operation — a double carries far more than
+     * the 2p+2 bits of mantissa that makes one rounding exact — and diverge for a chain, which is
+     * what any expression worth offloading is. Narrowing at the end was a wrong answer that looked
+     * like a conversion, and refusing was the honest position while it was the only alternative.
+     *
+     * <p>It is admitted now because the generator emits float arithmetic throughout instead: {@link
+     * #javaTypeOf} types every subexpression from its own declared type, so Java's promotion
+     * reproduces SQL's, and a {@code FLOAT} literal carries the {@code f} suffix rather than being
+     * merely narrowed — without it the constant is a double and promotes the whole expression
+     * around it straight back to where the bug was. {@link #rendersAsFloat} refuses a subtree that
+     * would mix the two.
+     */
+    private static boolean isDoubleResult(LogicalType type) {
+        LogicalTypeRoot root = type.getTypeRoot();
+        return root == LogicalTypeRoot.DOUBLE
+                || root == LogicalTypeRoot.INTEGER
+                || root == LogicalTypeRoot.FLOAT;
+    }
+
+    /**
+     * The Java type a subexpression of this declared type renders as.
+     *
+     * <p>The IR is already typed by Flink's own promotion rules -- {@code FLOAT * FLOAT} is {@code
+     * FLOAT}, {@code FLOAT * DOUBLE} is {@code DOUBLE} -- so honouring each node's declared type
+     * makes Java's promotion agree with SQL's by construction, rather than by a rule written here
+     * that would have to be kept in step with Calcite's.
+     */
+    /** The single element type of a packed buffer, or null if the columns do not agree on one. */
+    private static @Nullable GpuValueType uniformType(List<GpuValueType> types) {
+        if (types.isEmpty()) {
+            return null;
+        }
+        final GpuValueType first = types.get(0);
+        if (first != GpuValueType.DOUBLE && first != GpuValueType.FLOAT) {
+            return null;
+        }
+        for (GpuValueType type : types) {
+            if (type != first) {
+                return null;
+            }
+        }
+        return first;
+    }
+
+    private static String javaTypeOf(LogicalType type) {
+        if (isBooleanResult(type)) {
+            return "boolean";
+        }
+        return type.getTypeRoot() == LogicalTypeRoot.FLOAT ? "float" : "double";
+    }
+
+    /**
+     * Whether this subtree renders entirely in {@code float}.
+     *
+     * <p>Defence against an IR that is not well typed. A well-typed one cannot produce a {@code
+     * FLOAT} node over a {@code DOUBLE} subexpression, because SQL does not narrow implicitly --
+     * but if one arrived, the generated source would assign a {@code double} to a {@code float} and
+     * fail to compile at execute time, which is the worst moment to find out. Declining here makes
+     * it a planning decision instead.
+     */
+    /**
+     * Whether any node in this tree is typed {@code FLOAT} but would not be rendered as one.
+     *
+     * <p>The whole tree, not the root. renderClass declares a subexpression's local from that
+     * subexpression's own type, so a FLOAT node anywhere emits {@code final float tN = ...}; asking
+     * only about the root let {@code CAST(i AS FLOAT) * f + 0.0E0} through, whose root PLUS is
+     * DOUBLE while the TIMES beneath it is FLOAT. javac then rejected the generated class with
+     * "possible lossy conversion from double to float" -- on the TaskManager, at execute time,
+     * which is the failure this check exists to turn into a planning decision.
+     */
+    /** Largest magnitude an integer keeps exactly in a double. */
+    private static final long DOUBLE_EXACT_INTEGER = 1L << 53;
+
+    /** Whether this type is one SQL evaluates with wraparound rather than with saturation. */
+    private static boolean isExactInteger(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case TINYINT:
+            case SMALLINT:
+            case INTEGER:
+            case BIGINT:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Whether this expression would mean something different here than it does on the CPU.
+     *
+     * <p>The kernel evaluates everything in double and narrows an {@code INTEGER} column once on
+     * the way out. Flink evaluates {@code INTEGER} arithmetic in {@code int}, which wraps at every
+     * step. Those two agree only under conditions, and this is the proof that they hold.
+     *
+     * <p><b>Why a single narrowing is usually enough.</b> {@code +}, {@code -} and {@code *} are a
+     * ring homomorphism onto {@code int}: reducing modulo 2^32 at the end gives what reducing at
+     * every step gives. So a projection built only from those does not need its intermediates
+     * wrapped, as long as the exact value is still exact in a double -- hence {@link
+     * #DOUBLE_EXACT_INTEGER} as the bound on every integral node. {@code i * 1000} passes; {@code i
+     * * j} over two full-range columns reaches 2^62 and does not.
+     *
+     * <p><b>Where it is not enough.</b> Integer division, {@code MOD}, a widening to {@code DOUBLE}
+     * and a comparison all read the operand's <em>wrapped</em> value, and wrapping is not something
+     * this kernel does mid-expression. Such an operand therefore has to be one that never wraps at
+     * all -- exact range inside {@code int} -- and {@code mustNotWrap} is how that requirement is
+     * carried down. {@code MOD(i * 1000, 1000)} is refused for exactly this: the CPU wraps {@code i
+     * * 1000} to -1294967296 and takes its remainder, giving -296, where the exact arithmetic here
+     * would give 0.
+     *
+     * <p><b>What this deliberately does not do</b> is narrow the vocabulary. {@code id - (id / g) *
+     * g} -- which is what Calcite lowers {@code MOD(id, g)} to, and what every grouping key in this
+     * project's benchmarks is -- passes: the division's operand is a bare column, the product is
+     * bounded by the division, and the difference stays far inside 2^53. A rule that merely
+     * demanded every intermediate fit an {@code int} would have refused it, and with it the grouped
+     * aggregate.
+     */
+    private static boolean integerSemanticsDiffer(AccelExpression node, boolean mustNotWrap) {
+        if (isExactInteger(node.outputType())) {
+            final long[] range = exactRange(node);
+            if (range == null
+                    || range[0] < -DOUBLE_EXACT_INTEGER
+                    || range[1] > DOUBLE_EXACT_INTEGER) {
+                return true;
+            }
+            if (mustNotWrap && (range[0] < Integer.MIN_VALUE || range[1] > Integer.MAX_VALUE)) {
+                return true;
+            }
+        }
+        if (node instanceof AccelCall) {
+            final AccelCall call = (AccelCall) node;
+            // Only a ring operation over integers may hand its operands on unwrapped; everything
+            // else reads the value itself and so needs one that never wrapped.
+            final boolean ring =
+                    isExactInteger(node.outputType())
+                            && (call.function() == AccelFunction.PLUS
+                                    || call.function() == AccelFunction.MINUS
+                                    || call.function() == AccelFunction.TIMES
+                                    || call.function() == AccelFunction.NEGATE);
+            for (AccelExpression operand : call.operands()) {
+                if (integerSemanticsDiffer(operand, !ring)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The range of exact mathematical values this integral expression can take, or null if it
+     * cannot be bounded.
+     *
+     * <p>Interval arithmetic, in {@code long}, over the <em>unwrapped</em> value -- which is the
+     * point: it is what says whether wrapping could have happened. Anything it cannot bound is null
+     * and is refused by the caller, so every unhandled function is conservative by default.
+     */
+    private static @Nullable long[] exactRange(AccelExpression node) {
+        if (node instanceof AccelInputRef) {
+            return declaredRange(node.outputType());
+        }
+        if (node instanceof AccelLiteral) {
+            final Object value = ((AccelLiteral) node).value();
+            if (!(value instanceof Number)) {
+                return null;
+            }
+            // By value rather than by declared type. A divisor written 1000 can reach here as a
+            // DOUBLE literal -- the IR carries whatever Calcite typed it -- and 1000.0 bounds the
+            // division exactly as 1000 does. What matters is that the number is a whole one and
+            // small enough to be itself in a long.
+            final double exact = ((Number) value).doubleValue();
+            if (exact != Math.rint(exact) || Math.abs(exact) > DOUBLE_EXACT_INTEGER) {
+                return null;
+            }
+            final long v = (long) exact;
+            return new long[] {v, v};
+        }
+        if (!(node instanceof AccelCall)) {
+            return null;
+        }
+        final AccelCall call = (AccelCall) node;
+        final List<AccelExpression> operands = call.operands();
+        final long[] a = operands.isEmpty() ? null : exactRange(operands.get(0));
+        final long[] b = operands.size() < 2 ? null : exactRange(operands.get(1));
+        switch (call.function()) {
+            case NEGATE:
+                return a == null ? null : span(-a[1], -a[0]);
+            case PLUS:
+                return a == null || b == null ? null : span(a[0] + b[0], a[1] + b[1]);
+            case MINUS:
+                return a == null || b == null ? null : span(a[0] - b[1], a[1] - b[0]);
+            case TIMES:
+                return product(a, b);
+            case INT_DIVIDE:
+                // Magnitude never grows, except that MIN_VALUE / -1 is one past MAX_VALUE, which
+                // the symmetric bound below covers rather than hides.
+                if (a == null || b == null || (b[0] <= 0 && b[1] >= 0)) {
+                    return null;
+                }
+                return span(-magnitude(a), magnitude(a));
+            case MOD:
+                // Java's remainder takes the sign of the dividend and is strictly smaller than
+                // the divisor in magnitude.
+                if (a == null || b == null || (b[0] <= 0 && b[1] >= 0)) {
+                    return null;
+                }
+                return span(-(magnitude(b) - 1), magnitude(b) - 1);
+            case ABS:
+                return a == null ? null : span(0, magnitude(a));
+            case LEAST:
+                return a == null || b == null
+                        ? null
+                        : span(Math.min(a[0], b[0]), Math.min(a[1], b[1]));
+            case GREATEST:
+                return a == null || b == null
+                        ? null
+                        : span(Math.max(a[0], b[0]), Math.max(a[1], b[1]));
+            case CAST:
+                // A widening keeps the value; a narrowing is the CPU's own conversion and is not
+                // modelled here, so it is bounded only when it cannot narrow anything.
+                if (a == null || !isExactInteger(node.outputType())) {
+                    return null;
+                }
+                final long[] target = declaredRange(node.outputType());
+                return target != null && a[0] >= target[0] && a[1] <= target[1] ? a : null;
+            default:
+                return null;
+        }
+    }
+
+    private static @Nullable long[] declaredRange(LogicalType type) {
+        switch (type.getTypeRoot()) {
+            case TINYINT:
+                return new long[] {Byte.MIN_VALUE, Byte.MAX_VALUE};
+            case SMALLINT:
+                return new long[] {Short.MIN_VALUE, Short.MAX_VALUE};
+            case INTEGER:
+                return new long[] {Integer.MIN_VALUE, Integer.MAX_VALUE};
+            case BIGINT:
+                return new long[] {Long.MIN_VALUE, Long.MAX_VALUE};
+            default:
+                return null;
+        }
+    }
+
+    /** Largest magnitude in the range, saturating rather than wrapping on MIN_VALUE. */
+    private static long magnitude(long[] range) {
+        final long lo = range[0] == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(range[0]);
+        final long hi = range[1] == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(range[1]);
+        return Math.max(lo, hi);
+    }
+
+    /** A range, or null where the arithmetic that built it left long behind. */
+    private static @Nullable long[] span(long lo, long hi) {
+        if (lo > hi || overshot(lo) || overshot(hi)) {
+            return null;
+        }
+        return new long[] {lo, hi};
+    }
+
+    /**
+     * Whether a bound is far enough out that it may itself have overflowed {@code long}.
+     *
+     * <p>Everything past 2^53 is refused anyway, so there is no need to be precise here -- only to
+     * be certain that a wrapped {@code long} is never mistaken for a small range.
+     */
+    private static boolean overshot(long bound) {
+        return bound < -(1L << 60) || bound > (1L << 60);
+    }
+
+    private static @Nullable long[] product(@Nullable long[] a, @Nullable long[] b) {
+        if (a == null || b == null) {
+            return null;
+        }
+        final long[] corners = {
+            multiply(a[0], b[0]), multiply(a[0], b[1]), multiply(a[1], b[0]), multiply(a[1], b[1])
+        };
+        long lo = Long.MAX_VALUE;
+        long hi = Long.MIN_VALUE;
+        for (long corner : corners) {
+            if (corner == Long.MIN_VALUE) {
+                return null;
+            }
+            lo = Math.min(lo, corner);
+            hi = Math.max(hi, corner);
+        }
+        return span(lo, hi);
+    }
+
+    /** {@code a * b}, or {@code Long.MIN_VALUE} standing for "did not fit". */
+    private static long multiply(long a, long b) {
+        try {
+            return Math.multiplyExact(a, b);
+        } catch (ArithmeticException overflowed) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    private static boolean floatNodeCannotRender(AccelExpression node) {
+        if (node.outputType().getTypeRoot() == LogicalTypeRoot.FLOAT && !rendersAsFloat(node)) {
+            return true;
+        }
+        if (node instanceof AccelCall) {
+            for (AccelExpression operand : ((AccelCall) node).operands()) {
+                if (floatNodeCannotRender(operand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean rendersAsFloat(AccelExpression node) {
+        if (node.outputType().getTypeRoot() != LogicalTypeRoot.FLOAT) {
+            return false;
+        }
+        if (node instanceof AccelCall) {
+            for (AccelExpression operand : ((AccelCall) node).operands()) {
+                if (!rendersAsFloat(operand)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+}

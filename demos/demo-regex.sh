@@ -60,7 +60,7 @@ tm_opts_add "$TM_FLAGS"
 
 cluster_up
 trap '[[ ${KEEP:-0} == 1 ]] || cluster_down; tm_opts_restore' EXIT
-JVM_ARGS="$OPTS" "$FLINK_HOME/bin/flink" run -c org.apache.flink.table.examples.java.gpu.GrokSQLExample \
+JVM_ARGS="$OPTS" "$FLINK_HOME/bin/flink" run -c ai.beestream.flink.jitsql.bench.GrokSQLExample \
     "$JAR" --data "$DATA" --patterns "$PATTERNS" --parallelism "$PAR" ${SELECTIVE:-} 2>&1 \
     | grep -vE "^SLF4J|^WARNING"
 

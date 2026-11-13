@@ -54,7 +54,7 @@ cat <<'TXT'
 TXT
 cluster_up
 trap '[[ $KEEP == 1 ]] || cluster_down; tm_opts_restore' EXIT
-JVM_ARGS="$OPTS" "$FLINK_HOME/bin/flink" run -c org.apache.flink.table.examples.java.gpu.HaversineSQLExample \
+JVM_ARGS="$OPTS" "$FLINK_HOME/bin/flink" run -c ai.beestream.flink.jitsql.bench.HaversineSQLExample \
     "$JAR" "$ROWS" "$DATA" 2>&1 | grep -vE "^SLF4J|^WARNING"
 
 if [[ -n "$TM_FLAGS" ]]; then

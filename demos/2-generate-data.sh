@@ -57,7 +57,7 @@ done
 if [[ ${#TODO[@]} -gt 0 ]]; then
     echo "  generating: ${TODO[*]}"
     "$JAVA_HOME/bin/java" -Xmx12g -cp "$CP$JAR:$HADOOP_CLASSPATH" \
-        org.apache.flink.table.examples.java.gpu.LogCorpusGenerator "$DATA_ROOT" "${TODO[@]}"
+        ai.beestream.flink.jitsql.bench.LogCorpusGenerator "$DATA_ROOT" "${TODO[@]}"
 fi
 
 # The haversine example writes its own CSV on first run, so this is only worth

@@ -132,12 +132,12 @@ under the License.
 							<classifier>GpuOffloadExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.GpuOffloadExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.GpuOffloadExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/GpuOffloadExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/GpuOffloadExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -151,12 +151,12 @@ under the License.
 							<classifier>DeviceConformanceSuite</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.DeviceConformanceSuite</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.DeviceConformanceSuite</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/DeviceConformanceSuite*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/DeviceConformanceSuite*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -170,12 +170,12 @@ under the License.
 							<classifier>VectorScreenBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.VectorScreenBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.VectorScreenBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/VectorScreenBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/VectorScreenBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -189,12 +189,12 @@ under the License.
 							<classifier>SensorAnomalyBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.SensorAnomalyBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.SensorAnomalyBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/SensorAnomalyBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/SensorAnomalyBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -208,12 +208,12 @@ under the License.
 							<classifier>NearestNeighbourSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.NearestNeighbourSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.NearestNeighbourSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/NearestNeighbourSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/NearestNeighbourSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -227,12 +227,12 @@ under the License.
 							<classifier>LogCorpusGenerator</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.LogCorpusGenerator</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.LogCorpusGenerator</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/LogCorpusGenerator*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/LogCorpusGenerator*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -246,12 +246,12 @@ under the License.
 							<classifier>GrokSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.GrokSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.GrokSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/GrokSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/GrokSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -265,12 +265,12 @@ under the License.
 							<classifier>HaversineBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.HaversineBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.HaversineBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/HaversineBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/HaversineBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -284,12 +284,12 @@ under the License.
 							<classifier>FleetCentroidBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.FleetCentroidBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.FleetCentroidBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/FleetCentroidBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/FleetCentroidBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -303,12 +303,12 @@ under the License.
 							<classifier>BlackScholesBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.BlackScholesBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.BlackScholesBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/BlackScholesBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/BlackScholesBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -322,12 +322,12 @@ under the License.
 							<classifier>GroupedAggregateBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.GroupedAggregateBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.GroupedAggregateBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/GroupedAggregateBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/GroupedAggregateBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -341,12 +341,12 @@ under the License.
 							<classifier>JoinBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.JoinBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.JoinBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/JoinBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/JoinBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -360,12 +360,12 @@ under the License.
 							<classifier>OverAggregateBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.OverAggregateBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.OverAggregateBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/OverAggregateBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/OverAggregateBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -379,12 +379,12 @@ under the License.
 							<classifier>SortBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.SortBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.SortBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/SortBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/SortBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -398,12 +398,12 @@ under the License.
 							<classifier>LogisticRegressionBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.LogisticRegressionBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.LogisticRegressionBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/LogisticRegressionBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/LogisticRegressionBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -417,12 +417,12 @@ under the License.
 							<classifier>MixedTypeVerification</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.MixedTypeVerification</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.MixedTypeVerification</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/MixedTypeVerification*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/MixedTypeVerification*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -436,12 +436,12 @@ under the License.
 							<classifier>ReferenceJoinBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.ReferenceJoinBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.ReferenceJoinBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/ReferenceJoinBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/ReferenceJoinBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -455,12 +455,12 @@ under the License.
 							<classifier>FeatureGramBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.FeatureGramBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.FeatureGramBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/FeatureGramBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/FeatureGramBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -474,12 +474,12 @@ under the License.
 							<classifier>HaversineSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.HaversineSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.HaversineSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/HaversineSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/HaversineSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -493,12 +493,12 @@ under the License.
 							<classifier>GramParquetSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.GramParquetSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.GramParquetSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/GramParquetSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/GramParquetSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -512,12 +512,12 @@ under the License.
 							<classifier>RiskScoringSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.RiskScoringSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.RiskScoringSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/RiskScoringSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/RiskScoringSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -531,12 +531,12 @@ under the License.
 							<classifier>CudfSortSQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.CudfSortSQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.CudfSortSQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/CudfSortSQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/CudfSortSQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -550,12 +550,12 @@ under the License.
 							<classifier>CudfGroupBySQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.CudfGroupBySQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.CudfGroupBySQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/CudfGroupBySQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/CudfGroupBySQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -569,12 +569,12 @@ under the License.
 							<classifier>KMeansBenchmark</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.KMeansBenchmark</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.KMeansBenchmark</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/KMeansBenchmark*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/KMeansBenchmark*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -588,12 +588,12 @@ under the License.
 							<classifier>KernelAndLibrarySQLExample</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.KernelAndLibrarySQLExample</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.KernelAndLibrarySQLExample</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/KernelAndLibrarySQLExample*</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/KernelAndLibrarySQLExample*</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -607,12 +607,12 @@ under the License.
 							<classifier>GpuTriagePipeline</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.llm.GpuTriagePipeline</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.llm.GpuTriagePipeline</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/llm/**</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/llm/**</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>
@@ -626,12 +626,12 @@ under the License.
 							<classifier>CpuTriagePipeline</classifier>
 							<archive>
 								<manifestEntries>
-									<program-class>org.apache.flink.table.examples.java.gpu.llm.CpuTriagePipeline</program-class>
+									<program-class>ai.beestream.flink.jitsql.bench.llm.CpuTriagePipeline</program-class>
 								</manifestEntries>
 							</archive>
 							<includes>
-								<include>org/apache/flink/table/examples/java/gpu/llm/**</include>
-								<include>org/apache/flink/table/examples/java/gpu/BenchData*</include>
+								<include>ai/beestream/flink/jitsql/bench/llm/**</include>
+								<include>ai/beestream/flink/jitsql/bench/BenchData*</include>
 							</includes>
 						</configuration>
 					</execution>

@@ -64,7 +64,7 @@ if [[ "$ARM" == Gpu ]]; then
 else
     LABEL="CPU preprocessing + llama.cpp (separate process)"
 fi
-CLASS="org.apache.flink.table.examples.java.gpu.llm.${ARM}TriagePipeline"
+CLASS="ai.beestream.flink.jitsql.bench.llm.${ARM}TriagePipeline"
 JAR="$LLM_BENCH_JAR_PREFIX-${ARM}TriagePipeline.jar"
 [[ -f "$JAR" ]] || { echo "no jar at $JAR -- re-run llm-bench-setup.sh" >&2; exit 1; }
 [[ -d "$LLM_BENCH_DATA" ]] || { echo "no dataset at $LLM_BENCH_DATA -- re-run llm-bench-setup.sh" >&2; exit 1; }

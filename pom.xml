@@ -170,10 +170,16 @@ under the License.
 								<version>1.24.0</version>
 								<style>AOSP</style>
 							</googleJavaFormat>
-							<!-- \# refers to the static imports. Same order as Flink's, so a
-							     file moving either way needs no reformatting. -->
+							<!-- \# refers to the static imports. This project's own package
+							     first, then Flink's, then everything else.
+
+							     It used to be Flink's own order exactly, on the reasoning that
+							     a file moving either way would then need no reformatting. That
+							     stopped applying when the sources left the org.apache.flink
+							     namespace: no file moves either way now, and the first group
+							     should be this project's own code. -->
 							<importOrder>
-								<order>org.apache.flink,org.apache.flink.shaded,,javax,java,scala,\#</order>
+								<order>ai.beestream,org.apache.flink,org.apache.flink.shaded,,javax,java,scala,\#</order>
 							</importOrder>
 							<removeUnusedImports />
 						</java>

@@ -33,7 +33,7 @@
 # Expected outcome depends on which side of GpuOrCpuCalcOperatorFactory the build is on:
 #
 #   before it   the job FAILS -- "Cannot load user class:
-#               org.apache.flink.table.gpu.operator.GpuCalcOperator"
+#               ai.beestream.flink.jitsql.operator.GpuCalcOperator"
 #   after it    the job COMPLETES on the code-generated operator, at CPU speed, and the
 #               TaskManager log says which path it took and why
 #

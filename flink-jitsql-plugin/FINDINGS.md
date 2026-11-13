@@ -142,7 +142,7 @@ Both of those are cheap to test with what is already built.
 mvn -o -DskipTests package
 mvn -o -q dependency:build-classpath -Dmdep.outputFile=$PWD/target/cp.txt \
     -Dmdep.includeScope=test -pl flink-gpu-runtime
-./scripts/run-harness.sh org.apache.flink.table.gpu.Harness 8000000 262144
+./scripts/run-harness.sh ai.beestream.flink.jitsql.Harness 8000000 262144
 ```
 
 > **`Harness` no longer exists.** It drove `FilterProjectEngine`, the fixed two-kernel catalogue
@@ -350,7 +350,7 @@ mvn -o -DskipTests package                                               # here
 D=$TORNADO_SDK
 LIB=<flink-dist>/lib                 # excluding flink-table-planner-loader
 java "@$D/tornado-argfile" -cp "<runtime classes>:<resources>:<forked planner jar>:$LIB/*" \
-     org.apache.flink.table.gpu.EndToEnd 200000
+     ai.beestream.flink.jitsql.EndToEnd 200000
 ```
 
 ---

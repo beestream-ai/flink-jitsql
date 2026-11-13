@@ -204,7 +204,7 @@ card. The 20 s pause lets it settle.
 for r in 1 2 3 4 5; do
   for arm in Gpu Cpu; do
     s=$(date +%s.%N)
-    $FLINK_HOME/bin/flink run -c org.apache.flink.table.examples.java.gpu.llm.${arm}TriagePipeline \
+    $FLINK_HOME/bin/flink run -c ai.beestream.flink.jitsql.bench.llm.${arm}TriagePipeline \
         $J-${arm}TriagePipeline.jar --data $LLM_BENCH_DATA --model $LLM_BENCH_MODEL >/dev/null 2>&1
     echo "$arm $(python3 -c "print(f'{$(date +%s.%N)-$s:.2f}')")"
     sleep 20
