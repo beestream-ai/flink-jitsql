@@ -120,7 +120,16 @@ export TORNADOVM_HOME
 EXAMPLES=$(ls "${REPO}"/flink-jitsql-bench/target/flink-jitsql-bench-*-SNAPSHOT.jar 2>/dev/null \
            | grep -vE -- '-sources|-javadoc|original-' | head -1 || true)
 
-for required in "${JAVA_HOME}/bin/java" "${TORNADO_SDK}/tornado-argfile" "${FLINK_DIST}/lib"; do
+# check and smoke run in this repository's own JVM against Maven's classpath, so they need
+# no Flink distribution -- which matters, because the README's build step installs two Flink
+# modules and never produces one. Requiring a distribution here made the one command that is
+# supposed to say "it works" the one command a reader could not run.
+REQUIRED=("${JAVA_HOME}/bin/java" "${TORNADO_SDK}/tornado-argfile")
+case "${DEMO}" in
+    check|smoke) ;;
+    *) REQUIRED+=("${FLINK_DIST}/lib") ;;
+esac
+for required in "${REQUIRED[@]}"; do
     if [[ ! -e "${required}" ]]; then
         echo "not found: ${required}" >&2
         exit 1
@@ -200,11 +209,26 @@ logger.jobmaster.name = org.apache.flink.runtime.jobmaster
 logger.jobmaster.level = ERROR
 EOF
 
+# The classpath. For check and smoke, Maven's own runtime classpath for the bench module,
+# so a fresh clone needs nothing but this repository and an SDK. For the demos, the Flink
+# distribution's lib/, because they exercise the planner the way a cluster loads it.
+if [[ "${DEMO}" == check || "${DEMO}" == smoke ]]; then
+    CP_FILE="${REPO}/flink-jitsql-bench/target/.runtime-classpath"
+    if [[ ! -s "${CP_FILE}" ]]; then
+        (cd "${REPO}" && mvn -B -q -pl flink-jitsql-bench dependency:build-classpath \
+            -Dmdep.outputFile="${CP_FILE}" -Dmdep.includeScope=runtime) \
+            || { echo "could not resolve the bench module's classpath; run 'mvn install' first" >&2; exit 1; }
+    fi
+    RUN_CP="${LOGCONF}:${EXAMPLES}:${PROVIDER}:$(cat "${CP_FILE}")"
+else
+    RUN_CP="${LOGCONF}:${EXAMPLES}:${PROVIDER}:${FLINK_DIST}/lib/*"
+fi
+
 exec "${JAVA_HOME}/bin/java" \
     "@${TORNADO_SDK}/tornado-argfile" \
     -Dtornado.enable.fma=false \
     -Dtornado.cuda.compile.profile=repro \
     ${TORNADO_FLAGS[@]+"${TORNADO_FLAGS[@]}"} \
     ${EXTRA_JVM:-} \
-    -cp "${LOGCONF}:${EXAMPLES}:${PROVIDER}:${FLINK_DIST}/lib/*" \
+    -cp "${RUN_CP}" \
     "${MAIN}" ${ROWS:+"${ROWS}"} ${DATA:+"${DATA}"}
