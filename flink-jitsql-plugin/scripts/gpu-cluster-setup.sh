@@ -60,14 +60,14 @@ CONFIG="${FLINK_HOME}/conf/config.yaml"
 PROVIDER_JAR="${PROVIDER_JAR:-}"
 if [[ -z "${PROVIDER_JAR}" ]]; then
     MODULE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-    PROVIDER_JAR=$(ls "${MODULE_ROOT}"/target/flink-accelerator-tornadovm-*.jar 2>/dev/null \
+    PROVIDER_JAR=$(ls "${MODULE_ROOT}"/target/flink-jitsql-plugin-*.jar 2>/dev/null \
                    | grep -v -- '-sources\|-javadoc\|original-' | head -1 || true)
 fi
 if [[ -n "${PROVIDER_JAR}" && -f "${PROVIDER_JAR}" ]]; then
-    rm -f "${FLINK_HOME}"/lib/flink-accelerator-tornadovm-*.jar
+    rm -f "${FLINK_HOME}"/lib/flink-jitsql-plugin-*.jar
     cp "${PROVIDER_JAR}" "${FLINK_HOME}/lib/"
     echo "installed $(basename "${PROVIDER_JAR}") into lib/"
-elif ls "${FLINK_HOME}"/lib/flink-accelerator-tornadovm-*.jar >/dev/null 2>&1; then
+elif ls "${FLINK_HOME}"/lib/flink-jitsql-plugin-*.jar >/dev/null 2>&1; then
     echo "provider already in lib/ and no newer jar built"
 else
     echo "no provider jar: run 'mvn install -DskipTests' in this repository first" >&2

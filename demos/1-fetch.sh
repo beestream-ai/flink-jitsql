@@ -197,8 +197,8 @@ echo "building against TornadoVM $TVM_VERSION"
 demo_banner "6/7  deploying into the Flink distribution"
 # ---------------------------------------------------------------------------
 TORNADOVM_HOME="$TORNADOVM_HOME" FLINK_SRC="$FLINK_SRC" \
-    PROVIDER_JAR="$(ls "$PROVIDER_SRC"/flink-accelerator-tornadovm/target/flink-accelerator-tornadovm-*.jar | grep -v sources | head -1)" \
-    "$PROVIDER_SRC/flink-accelerator-tornadovm/scripts/gpu-cluster-setup.sh" "$FLINK_HOME"
+    PROVIDER_JAR="$(ls "$PROVIDER_SRC"/flink-jitsql-plugin/target/flink-jitsql-plugin-*.jar | grep -v sources | head -1)" \
+    "$PROVIDER_SRC/flink-jitsql-plugin/scripts/gpu-cluster-setup.sh" "$FLINK_HOME"
 
 # The demos want more than the default slot and a bigger off-heap budget:
 # TornadoVM stages through java.lang.foreign, which counts against the JVM

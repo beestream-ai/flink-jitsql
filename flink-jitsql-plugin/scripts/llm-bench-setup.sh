@@ -235,7 +235,7 @@ if (( do_flink )); then
     ( cd "$PROVIDER_SRC" && mvn -q -DskipTests -Dspotless.check.skip=true \
         -Drat.skip=true -Dcheckstyle.skip=true install )
 fi
-EXAMPLES="$(ls "$PROVIDER_SRC"/flink-accelerator-tornadovm-examples/target/*-GpuTriagePipeline.jar 2>/dev/null | head -1)"
+EXAMPLES="$(ls "$PROVIDER_SRC"/flink-jitsql-bench/target/*-GpuTriagePipeline.jar 2>/dev/null | head -1)"
 [[ -n "$EXAMPLES" ]] || die "no example jars built -- run without --skip-flink"
 JAR_PREFIX="${EXAMPLES%-GpuTriagePipeline.jar}"
 
@@ -245,8 +245,8 @@ JAR_PREFIX="${EXAMPLES%-GpuTriagePipeline.jar}"
 [[ -d "$FLINK_HOME/bin" ]] || die "no Flink distribution at $FLINK_HOME (set FLINK_HOME)"
 if (( do_deploy )); then
     say "deploying into $FLINK_HOME"
-    "$PROVIDER_SRC/flink-accelerator-tornadovm/scripts/gpu-cluster-setup.sh"  "$FLINK_HOME"
-    "$PROVIDER_SRC/flink-accelerator-tornadovm/scripts/llm-pipeline-setup.sh" "$FLINK_HOME" "$JITLLM_JAR"
+    "$PROVIDER_SRC/flink-jitsql-plugin/scripts/gpu-cluster-setup.sh"  "$FLINK_HOME"
+    "$PROVIDER_SRC/flink-jitsql-plugin/scripts/llm-pipeline-setup.sh" "$FLINK_HOME" "$JITLLM_JAR"
     # The engine's device workspaces are direct buffers and Flink charges them to a budget it
     # sizes from its own memory model, which knows nothing about a model in the same JVM.
     python3 - "$FLINK_HOME/conf/config.yaml" <<'PY'
@@ -316,7 +316,7 @@ cat <<DONE
 
     Run one experiment with:
 
-        $PROVIDER_SRC/flink-accelerator-tornadovm/scripts/llm-bench-run.sh --gpu
-        $PROVIDER_SRC/flink-accelerator-tornadovm/scripts/llm-bench-run.sh --cpu
+        $PROVIDER_SRC/flink-jitsql-plugin/scripts/llm-bench-run.sh --gpu
+        $PROVIDER_SRC/flink-jitsql-plugin/scripts/llm-bench-run.sh --cpu
 
 DONE

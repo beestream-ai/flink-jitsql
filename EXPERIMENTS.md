@@ -29,7 +29,7 @@ differ in two things:
 | **`CpuTriagePipeline`** | Flink's code-generated operator, on the cores | **llama.cpp**, in a separate process, over HTTP |
 
 The SQL text is identical in both. The measured result and what it means is in
-`flink-accelerator-tornadovm/FINDINGS.md`, under *A Flink query and a language model on one GPU*.
+`flink-jitsql-plugin/FINDINGS.md`, under *A Flink query and a language model on one GPU*.
 
 ---
 
@@ -79,7 +79,7 @@ running the setup script. A single cold run works without it; nothing warm does.
 
 ```bash
 cd <this repository>
-./flink-accelerator-tornadovm/scripts/llm-bench-setup.sh
+./flink-jitsql-plugin/scripts/llm-bench-setup.sh
 ```
 
 It does seven things, in an order that is not a preference — each step installs the artifact the
@@ -121,8 +121,8 @@ a bootstrap class owns, and that is only safe because jitllm's own classes come 
 Start the cluster, run once, stop the cluster:
 
 ```bash
-./flink-accelerator-tornadovm/scripts/llm-bench-run.sh --gpu     # GPU preprocess + jitllm
-./flink-accelerator-tornadovm/scripts/llm-bench-run.sh --cpu     # CPU preprocess + llama.cpp
+./flink-jitsql-plugin/scripts/llm-bench-run.sh --gpu     # GPU preprocess + jitllm
+./flink-jitsql-plugin/scripts/llm-bench-run.sh --cpu     # CPU preprocess + llama.cpp
 ```
 
 | flag | |

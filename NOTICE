@@ -1,7 +1,7 @@
-flink-accelerator-tornadovm
+flink-jitsql
 Copyright (c) 2026 Beestream Ltd.
 
-flink-accelerator-tornadovm is licensed under the Apache License, Version 2.0 (see LICENSE).
+flink-jitsql is licensed under the Apache License, Version 2.0 (see LICENSE).
 Every source file in this repository carries the matching header.
 
 No third-party source is included here. The build, the examples and the demos use the

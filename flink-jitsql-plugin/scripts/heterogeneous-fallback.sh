@@ -61,7 +61,7 @@ if [[ -z "${JAR}" ]]; then
     echo "HaversineBenchmark jar not found under ${FLINK_HOME}/examples/table" >&2
     exit 1
 fi
-if ! ls "${FLINK_HOME}"/lib/flink-accelerator-tornadovm-*.jar >/dev/null 2>&1; then
+if ! ls "${FLINK_HOME}"/lib/flink-jitsql-plugin-*.jar >/dev/null 2>&1; then
     echo "no provider jar in lib/ -- run gpu-cluster-setup.sh first" >&2
     echo "(with the module absent from the client too, there is nothing to reproduce)" >&2
     exit 1
@@ -72,10 +72,10 @@ NOGPU="${FLINK_HOME}/lib-nogpu"
 rm -rf "${NOGPU}"
 mkdir -p "${NOGPU}"
 cp "${FLINK_HOME}"/lib/*.jar "${NOGPU}"/
-rm -f "${NOGPU}"/flink-accelerator-tornadovm-*.jar
+rm -f "${NOGPU}"/flink-jitsql-plugin-*.jar
 
-echo "### client lib: $(ls "${FLINK_HOME}"/lib/flink-accelerator-tornadovm-*.jar | wc -l) provider jar(s)"
-echo "### TM     lib: $(ls "${NOGPU}"/flink-accelerator-tornadovm-*.jar 2>/dev/null | wc -l) provider jar(s)"
+echo "### client lib: $(ls "${FLINK_HOME}"/lib/flink-jitsql-plugin-*.jar | wc -l) provider jar(s)"
+echo "### TM     lib: $(ls "${NOGPU}"/flink-jitsql-plugin-*.jar 2>/dev/null | wc -l) provider jar(s)"
 
 "${FLINK_HOME}/bin/stop-cluster.sh" >/dev/null 2>&1
 trap '"${FLINK_HOME}/bin/stop-cluster.sh" >/dev/null 2>&1 || true' EXIT

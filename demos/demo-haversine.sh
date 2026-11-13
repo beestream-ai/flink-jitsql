@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
     *) demo_die "unknown argument $1" ;;
 esac; done
 
-JAR="$PROVIDER_SRC/flink-accelerator-tornadovm-examples/target/HaversineSQLExample.jar"
+JAR="$PROVIDER_SRC/flink-jitsql-bench/target/HaversineSQLExample.jar"
 [[ -f "$JAR" ]] || demo_die "no example jar at $JAR -- run ./1-fetch.sh"
 DATA="$DATA_ROOT/haversine-$ROWS"
 

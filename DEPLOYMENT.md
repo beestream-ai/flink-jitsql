@@ -58,7 +58,7 @@ enabled is what a TaskManager running this actually runs on.
 
 ```bash
 TORNADOVM_HOME=/path/to/tornadovm-8.1.0-jdk21-cuda \
-  flink-accelerator-tornadovm/scripts/gpu-cluster-setup.sh $FLINK_HOME
+  flink-jitsql-plugin/scripts/gpu-cluster-setup.sh $FLINK_HOME
 ```
 
 Four things happen, and each matters:
@@ -143,13 +143,13 @@ distribution** — that step is yours, and the `run-*.sh` helpers expect them in
 `examples/table/`:
 
 ```bash
-cp flink-accelerator-tornadovm-examples/target/HaversineBenchmark.jar \
+cp flink-jitsql-bench/target/HaversineBenchmark.jar \
    $FLINK_HOME/examples/table/
 $FLINK_HOME/bin/start-cluster.sh
 $FLINK_HOME/bin/flink run $FLINK_HOME/examples/table/HaversineBenchmark.jar --data /tmp/points
 ```
 
-`flink-accelerator-tornadovm/scripts/` has a `run-<benchmark>.sh` per benchmark,
+`flink-jitsql-plugin/scripts/` has a `run-<benchmark>.sh` per benchmark,
 which sweeps the CPU and device arms and prints one line per run. Each one fails
 loudly if its jar is not where it expects it.
 

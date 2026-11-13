@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
     *) demo_die "unknown argument $1" ;;
 esac; done
 
-JAR="$PROVIDER_SRC/flink-accelerator-tornadovm-examples/target/flink-accelerator-tornadovm-examples-0.1.0-SNAPSHOT-GrokSQLExample.jar"
+JAR="$PROVIDER_SRC/flink-jitsql-bench/target/flink-jitsql-bench-0.1.0-SNAPSHOT-GrokSQLExample.jar"
 [[ -f "$JAR" ]] || demo_die "no example jar at $JAR -- run ./1-fetch.sh"
 DATA="$DATA_ROOT/logs$ROWS"
 [[ -d "$DATA" ]] || demo_die "no corpus at $DATA

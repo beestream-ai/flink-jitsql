@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
     *)      EXTRA+=("$1"); shift ;;
 esac; done
 
-RUNNER="$PROVIDER_SRC/flink-accelerator-tornadovm/scripts/llm-bench-run.sh"
+RUNNER="$PROVIDER_SRC/flink-jitsql-plugin/scripts/llm-bench-run.sh"
 [[ -x "$RUNNER" ]] || demo_die "missing $RUNNER"
 # The triage readings live with the other corpora, under this install's own
 # DATA_ROOT. There is deliberately no second location to fall back to: a

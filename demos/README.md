@@ -23,7 +23,7 @@ third. Both of the first two are idempotent, so a failed step can be fixed and
 the script re-run.
 
 ```bash
-git clone <this repo> && cd flink-accelerator-tornadovm/demos
+git clone <this repo> && cd flink-jitsql-plugin/demos
 ./1-fetch.sh            # 40-70 minutes cold; Flink's own build is most of it
 ./2-generate-data.sh    # a few minutes
 source ./3-env.sh

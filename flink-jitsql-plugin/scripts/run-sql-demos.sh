@@ -178,7 +178,7 @@ export TORNADOVM_HOME
 
 # The module jar, the one holding every example class -- not one of the many single-class
 # jars the build also produces for `flink run`, whose names carry a classifier.
-EXAMPLES=$(ls "${REPO}"/flink-accelerator-tornadovm-examples/target/flink-accelerator-tornadovm-examples-*-SNAPSHOT.jar 2>/dev/null \
+EXAMPLES=$(ls "${REPO}"/flink-jitsql-bench/target/flink-jitsql-bench-*-SNAPSHOT.jar 2>/dev/null \
            | grep -vE -- '-sources|-javadoc|original-' | head -1 || true)
 
 for required in "${JAVA_HOME}/bin/java" "${TORNADO_SDK}/tornado-argfile" "${FLINK_DIST}/lib"; do
@@ -197,7 +197,7 @@ fi
 # that has been rebuilt and installed is still invisible to a demo reading lib/. That is
 # the trap DEPLOYMENT.md records for clusters, and it applies here for the same reason.
 # Deleting a class makes it worse rather than better -- the stale jar still has it.
-PROVIDER=$(ls "${REPO}"/flink-accelerator-tornadovm/target/flink-accelerator-tornadovm-*.jar 2>/dev/null \
+PROVIDER=$(ls "${REPO}"/flink-jitsql-plugin/target/flink-jitsql-plugin-*.jar 2>/dev/null \
            | grep -vE -- '-sources|-javadoc|original-' | head -1 || true)
 if [[ -z "${PROVIDER}" ]]; then
     echo "no provider jar: run 'mvn install -DskipTests' in ${REPO} first" >&2

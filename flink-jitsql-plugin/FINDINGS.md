@@ -616,7 +616,7 @@ Measured 2026-09-27. Two applications over one SQL text, differing in where the 
 scored and which engine writes the note. `GpuTriagePipeline` scores on the device through the
 accelerator and generates from jitllm loaded into the TaskManager's own JVM; `CpuTriagePipeline`
 runs the identical SQL with the accelerator off and reaches llama.cpp over HTTP. Sources under
-`flink-accelerator-tornadovm-examples/.../java/gpu/llm/`; `EXPERIMENTS.md` at the repository root
+`flink-jitsql-bench/.../java/gpu/llm/`; `EXPERIMENTS.md` at the repository root
 says how to run them.
 
 **Machine.** RTX 4070 Laptop (8 GiB, driver 595.71.05), i9-13900H, 30 GiB RAM, JDK 21.0.3,

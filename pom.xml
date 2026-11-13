@@ -22,12 +22,12 @@ under the License.
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>io.github.beehive-lab</groupId>
-	<artifactId>flink-accelerator-tornadovm-parent</artifactId>
+	<groupId>ai.beestream</groupId>
+	<artifactId>flink-jitsql-parent</artifactId>
 	<version>0.1.0-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
-	<name>Flink Accelerator : TornadoVM : Parent</name>
+	<name>flink-jitsql : parent</name>
 	<description>
 		A TornadoVM-backed AcceleratorProvider for Apache Flink's Table API.
 
@@ -43,8 +43,8 @@ under the License.
 	</description>
 
 	<modules>
-		<module>flink-accelerator-tornadovm</module>
-		<module>flink-accelerator-tornadovm-examples</module>
+		<module>flink-jitsql-plugin</module>
+		<module>flink-jitsql-bench</module>
 	</modules>
 
 	<properties>
@@ -68,7 +68,7 @@ under the License.
 
 			Running on a device is a separate matter and still needs a TornadoVM SDK on the
 			TaskManager: see the `device` profile below and DEPLOYMENT.md. The released CUDA SDK
-			is enough, including for the cuDF path -- 8.1.0 ships lib/libtornado-cudf.so already
+			is enough, including for the cuDF path: 8.1.0 ships lib/libtornado-cudf.so already
 			built, which earlier releases did not, so no TornadoVM build from source is needed
 			for any of this. What the shim still needs is RAPIDS libcudf on LD_LIBRARY_PATH;
 			without it the provider declines the operators that use it.

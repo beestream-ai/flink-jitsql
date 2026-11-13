@@ -1,4 +1,4 @@
-# flink-accelerator-tornadovm
+# flink-jitsql
 
 A TornadoVM-backed `AcceleratorProvider` for Apache Flink's Table API.
 
@@ -48,9 +48,9 @@ description; this ships the rate and the kernel.
 
 ## Deploy
 
-Put `flink-accelerator-tornadovm/target/flink-accelerator-tornadovm-*.jar` in a
+Put `flink-jitsql-plugin/target/flink-jitsql-plugin-*.jar` in a
 distribution's `lib/`, and start the TaskManagers with TornadoVM's JVM arguments.
-`flink-accelerator-tornadovm/scripts/gpu-cluster-setup.sh` does both.
+`flink-jitsql-plugin/scripts/gpu-cluster-setup.sh` does both.
 
 **[DEPLOYMENT.md](DEPLOYMENT.md)** has the whole picture: how the four pieces fit
 together, the build order and why it is strict, what the setup script changes, and
@@ -63,15 +63,15 @@ runs the code-generated operator instead and logs why. Nothing fails.
 
 | module | what it is |
 |---|---|
-| `flink-accelerator-tornadovm` | the provider: kernel generation, gathers, the staging operator |
-| `flink-accelerator-tornadovm-examples` | runnable examples and benchmarks, one jar each |
+| `flink-jitsql-plugin` | the provider: kernel generation, gathers, the staging operator |
+| `flink-jitsql-bench` | runnable examples and benchmarks, one jar each |
 
-`flink-accelerator-tornadovm/FINDINGS.md` is the measurement record: where the
+`flink-jitsql-plugin/FINDINGS.md` is the measurement record: where the
 time actually goes, and which of the original predictions it contradicted.
 
 ## Two examples to read first
 
-Everything else in `flink-accelerator-tornadovm-examples` is a benchmark: a
+Everything else in `flink-jitsql-bench` is a benchmark: a
 command line, several arms, and an environment record, built to answer a question
 rather than to be read. These two are not. They are written the way
 `WordCountSQLExample` is — one class, one `main`, the SQL in the middle of it —
@@ -84,8 +84,8 @@ the two halves of the integration.
 | `CudfSortSQLExample` | an **`ORDER BY` served by a library**. No generated kernel at all: the provider recognises the operator and hands it to `cudf::stable_sorted_order` through TornadoVM's `tornado-cudf` binding. | `--printBytecodes` prints `LAUNCH task - sort.order[sortedOrder]` on the CUDA device |
 
 ```bash
-flink-accelerator-tornadovm/scripts/run-sql-demos.sh haversine --printKernel
-flink-accelerator-tornadovm/scripts/run-sql-demos.sh cudf-sort --printBytecodes
+flink-jitsql-plugin/scripts/run-sql-demos.sh haversine --printKernel
+flink-jitsql-plugin/scripts/run-sql-demos.sh cudf-sort --printBytecodes
 ```
 
 Both run in one JVM against an in-process MiniCluster, so there is no cluster to

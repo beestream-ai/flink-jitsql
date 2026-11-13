@@ -20,7 +20,7 @@ _demos_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- which tree is this? ---------------------------------------------------
 # 1-fetch.sh writes $DEMO_ROOT/env.sh, and these scripts live two levels below
-# it ($DEMO_ROOT/flink-accelerator-tornadovm/demos). Finding that file is the
+# it ($DEMO_ROOT/flink-jitsql-plugin/demos). Finding that file is the
 # only thing that tells us which install we are in. Without this step DEMO_ROOT
 # falls back to the default location, a tree fetched anywhere else never reads
 # its own env.sh, and the demos look for data in a directory that was never
@@ -39,10 +39,10 @@ fi
 
 # These scripts ship inside the provider repository, so when they are run from a
 # clone they already know where it is.
-if [[ -z "${PROVIDER_SRC:-}" && -d "$(dirname "$_demos_dir")/flink-accelerator-tornadovm/scripts" ]]; then
+if [[ -z "${PROVIDER_SRC:-}" && -d "$(dirname "$_demos_dir")/flink-jitsql-plugin/scripts" ]]; then
     PROVIDER_SRC="$(dirname "$_demos_dir")"
 fi
-: "${PROVIDER_SRC:=$DEMO_ROOT/flink-accelerator-tornadovm}"
+: "${PROVIDER_SRC:=$DEMO_ROOT/flink-jitsql-plugin}"
 
 # --- machine-specific overrides -------------------------------------------
 # $DEMO_ROOT/env.sh is written by 1-fetch.sh; env.local.sh is hand-written on a

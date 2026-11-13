@@ -23,13 +23,13 @@ under the License.
 	<modelVersion>4.0.0</modelVersion>
 
 	<parent>
-		<groupId>io.github.beehive-lab</groupId>
-		<artifactId>flink-accelerator-tornadovm-parent</artifactId>
+		<groupId>ai.beestream</groupId>
+		<artifactId>flink-jitsql-parent</artifactId>
 		<version>0.1.0-SNAPSHOT</version>
 	</parent>
 
-	<artifactId>flink-accelerator-tornadovm-examples</artifactId>
-	<name>Flink Accelerator : TornadoVM : Examples</name>
+	<artifactId>flink-jitsql-bench</artifactId>
+	<name>flink-jitsql : bench</name>
 
 	<description>
 		Runnable examples and benchmarks for the provider.
@@ -43,8 +43,8 @@ under the License.
 
 	<dependencies>
 		<dependency>
-			<groupId>io.github.beehive-lab</groupId>
-			<artifactId>flink-accelerator-tornadovm</artifactId>
+			<groupId>ai.beestream</groupId>
+			<artifactId>flink-jitsql-plugin</artifactId>
 			<version>${project.version}</version>
 		</dependency>
 		<dependency>

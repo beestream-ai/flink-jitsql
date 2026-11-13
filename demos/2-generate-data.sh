@@ -36,10 +36,10 @@ mkdir -p "$DATA_ROOT"
 
 demo_banner "log corpus -> $DATA_ROOT"
 export HADOOP_CLASSPATH="$(hadoop_classpath)"
-EX="$PROVIDER_SRC/flink-accelerator-tornadovm-examples/target"
+EX="$PROVIDER_SRC/flink-jitsql-bench/target"
 # The examples module shades one jar per main class, so the generator is in its
 # own, not in GrokSQLExample's.
-JAR="$EX/flink-accelerator-tornadovm-examples-0.1.0-SNAPSHOT-LogCorpusGenerator.jar"
+JAR="$EX/flink-jitsql-bench-0.1.0-SNAPSHOT-LogCorpusGenerator.jar"
 [[ -f "$JAR" ]] || demo_die "missing $(basename "$JAR") in $EX -- run ./1-fetch.sh first"
 unzip -l "$JAR" 2>/dev/null | grep -q 'LogCorpusGenerator\.class' \
     || demo_die "$(basename "$JAR") does not contain LogCorpusGenerator -- rebuild with ./1-fetch.sh"
@@ -109,7 +109,7 @@ fi
 # skipped and what is left is the two engines, the deploy and the triage data.
 # ---------------------------------------------------------------------------
 if [[ $WITH_MODEL == 1 && -f "$MODEL" ]]; then
-    LLM_SETUP="$PROVIDER_SRC/flink-accelerator-tornadovm/scripts/llm-bench-setup.sh"
+    LLM_SETUP="$PROVIDER_SRC/flink-jitsql-plugin/scripts/llm-bench-setup.sh"
     if [[ -x "$LLM_SETUP" ]]; then
         demo_banner "demo 3: jitllm, llama.cpp and the triage dataset"
         echo "  building the two engines -- about fifteen minutes the first time"

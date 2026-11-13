@@ -128,7 +128,7 @@ jobs:
             echo "### Device test results"
             echo '```'
             grep -h -E 'Tests run:' \
-              flink-accelerator-tornadovm/target/surefire-reports/*.txt 2>/dev/null \
+              flink-jitsql-plugin/target/surefire-reports/*.txt 2>/dev/null \
               || echo "no surefire reports"
             echo '```'
             echo "Skips mean 'not checked here', not 'checked and fine'."
