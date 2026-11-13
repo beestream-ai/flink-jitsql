@@ -154,7 +154,10 @@ echo "    jar: $JITLLM_JAR"
 if (( do_llamacpp )); then
     [[ -d "$LLAMACPP_SRC" ]] || die "no llama.cpp checkout at $LLAMACPP_SRC (set LLAMACPP_SRC)"
     say "building llama.cpp (CUDA)"
-    CUDA_REAL="${CUDA_REAL:-/usr/local/cuda}"
+    # From nvcc on PATH via scripts/env.sh, so no path is written down here; set CUDA_HOME
+    # (or CUDA_REAL) on a machine where nvcc is not on PATH.
+    CUDA_REAL="${CUDA_REAL:-${CUDA_HOME:-}}"
+    [[ -n "$CUDA_REAL" ]] || die "no CUDA toolkit found: put nvcc on PATH or set CUDA_HOME"
     CMAKE_CUDA_ARGS=()
     if [[ -f "$CUDA_REAL/include/cublas_v2.h" || -f "$CUDA_REAL/targets/x86_64-linux/include/cublas_v2.h" ]]; then
         echo "    toolkit at $CUDA_REAL has cuBLAS; using it directly"

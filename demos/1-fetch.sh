@@ -98,12 +98,11 @@ for t in mvn cmake python3 git g++; do command -v $t >/dev/null || demo_die "mis
 # A CUDA toolkit that has cudnn.h lets the cuDNN and CUTLASS bindings build,
 # which the LLM demo wants for its fused attention. Without one the other two
 # demos are unaffected and the LLM demo still runs, on a slower prefill path.
-if [[ -z "${CUDA_PATH:-}" ]]; then
-    for c in /usr/local/cuda-12.5 /usr/local/cuda-12 /usr/local/cuda; do
-        [[ -f "$c/include/cuda_runtime.h" ]] && { export CUDA_PATH="$c"; break; }
-    done
+if [[ -z "${CUDA_PATH:-}" && -n "${CUDA_HOME:-}" ]]; then
+    [[ -f "${CUDA_HOME}/include/cuda_runtime.h" ]] && export CUDA_PATH="${CUDA_HOME}"
 fi
-[[ -n "${CUDA_PATH:-}" ]] || demo_die "no CUDA toolkit found. Set CUDA_PATH."
+[[ -n "${CUDA_PATH:-}" ]] || demo_die \
+    "no CUDA toolkit found. Put nvcc on PATH, or set CUDA_HOME (or CUDA_PATH) to the toolkit."
 echo "CUDA     $CUDA_PATH"
 export NVCC_PREPEND_FLAGS="${NVCC_PREPEND_FLAGS:--allow-unsupported-compiler}"
 

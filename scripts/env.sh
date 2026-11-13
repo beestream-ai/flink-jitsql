@@ -73,6 +73,19 @@ export TORNADOVM_SRC="${TORNADOVM_SRC:-$(dirname "$JITSQL_ROOT")/TornadoVM}"
 # Generated data sets. Not under /tmp: it is tmpfs here, so a large data set is written to RAM.
 export DATA_ROOT="${DATA_ROOT:-$HOME/gpu-bench-data}"
 
+# --- CUDA ---------------------------------------------------------------------------------
+
+# The CUDA toolkit, for the demos that build native code (llama.cpp, the cuDNN and CUTLASS
+# bindings). Nothing in the provider itself needs it: TornadoVM dlopens the system libraries.
+#
+# Derived from nvcc on PATH rather than from a list of the usual install directories, so that
+# no script here names an absolute path. On a machine where nvcc is not on PATH, set CUDA_HOME
+# -- the same deal as JAVA_HOME and TORNADOVM_HOME, and the scripts that need it say so.
+if [ -z "${CUDA_HOME:-}" ] && command -v nvcc >/dev/null 2>&1; then
+    CUDA_HOME="$(cd "$(dirname "$(command -v nvcc)")/.." && pwd)"
+fi
+export CUDA_HOME="${CUDA_HOME:-}"
+
 # --- RAPIDS -----------------------------------------------------------------------------
 
 # libcudf and its dependencies, for the operators cuDF serves. scripts/cudf-env.sh installs
