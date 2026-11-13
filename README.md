@@ -31,11 +31,13 @@ description; this ships the rate and the kernel.
   only on the `gpu-offload` branch. Build that with `mvn install -DskipTests`
   first.
 - **TornadoVM 8.1.0**, from Maven Central. Nothing has to be built to compile
-  this or to run its tests. Running on a *device* is separate and needs an SDK
-  with the CUDA backend — `sdk install tornadovm 8.1.0-jdk21-cuda` is the
-  quickest. The cuDF path needs more than a released SDK: `libtornado-cudf.so`
-  is built only when `CUDF_HOME` is set at TornadoVM build time, so a released
-  SDK does not carry it and the operators that need it decline.
+  this or to run its tests. Running on a *device* needs an SDK with the CUDA
+  backend: `sdk install tornadovm 8.1.0-jdk21-cuda`. That released SDK is
+  sufficient for everything here, the cuDF path included — 8.1.0 ships
+  `lib/libtornado-cudf.so` already built, where earlier releases did not.
+- **RAPIDS libcudf**, for the operators served by cuDF, on `LD_LIBRARY_PATH`.
+  Six directories, not the obvious one; `scripts/run-sql-demos.sh` assembles
+  them and says why. Without it those operators decline and the rest still runs.
 - **JDK 21.** TornadoVM's off-heap arrays are built on `java.lang.foreign`, a
   preview API on 21 and final on 22; Flink 2.3 has no JDK 22+ profile, so
   21-with-preview is what a TaskManager running this actually runs on.

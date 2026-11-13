@@ -67,10 +67,11 @@ under the License.
 			8.1.0 (2026-11-06), so a clean checkout builds and its tests run with Maven alone.
 
 			Running on a device is a separate matter and still needs a TornadoVM SDK on the
-			TaskManager: see the `device` profile below and DEPLOYMENT.md. The cuDF path needs
-			more than a released SDK: lib/libtornado-cudf.so is built only when CUDF_HOME is set
-			at TornadoVM build time, so a released SDK does not carry it and the provider
-			declines the operators that need it.
+			TaskManager: see the `device` profile below and DEPLOYMENT.md. The released CUDA SDK
+			is enough, including for the cuDF path -- 8.1.0 ships lib/libtornado-cudf.so already
+			built, which earlier releases did not, so no TornadoVM build from source is needed
+			for any of this. What the shim still needs is RAPIDS libcudf on LD_LIBRARY_PATH;
+			without it the provider declines the operators that use it.
 
 			To build against a TornadoVM develop install, pass its version:
 			-Dtornado.version=8.1.1-jdk21-dev.
