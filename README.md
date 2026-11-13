@@ -1,83 +1,105 @@
 # flink-jitsql
 
-A TornadoVM-backed `AcceleratorProvider` for Apache Flink's Table API.
+**Flink SQL operators on a GPU, through TornadoVM.**
 
-Flink discovers an accelerator through `ServiceLoader` and knows nothing about the
-one it finds — not the framework, not the device API, not the vendor. This
-repository is the other side of that interface. It holds everything Flink must
-not: kernel generation, buffer layouts, staging widths, and every constant
-calibrated against a particular card.
+Runs bounded batch Table API/SQL operators on an NVIDIA GPU. The query author writes
+ordinary Flink SQL and nothing else — no API, no annotation, no hint, no per-query
+option — and the planner decides what is worth moving.
 
-## Why it is not part of Flink
+```sql
+SELECT id, lat, lon, 6371.0 * 2 * ASIN(SQRT(...)) AS km FROM Points WHERE ...
+```
 
-It was, and the build gave the coupling away: Flink's own reactor depended on a
-vendor runtime — a CUDA toolchain, a driver floor, JVM module-path requirements
-— and the planner emitted
-`uk.ac.manchester.tornado.api.types.arrays.DoubleArray` into generated source. An
-extension point cannot be proposed on those terms, because the vendor *is* the
-interface.
+That query runs on the device. Nothing in it says so, and that is the claim: the
+answer does not depend on where it ran.
 
-The artifacts were also unpublished then, and that is the part people noticed;
-TornadoVM has since published them to Maven Central and it changes nothing. A
-checkout of Flink still must not need a GPU toolchain to build.
+## Why
 
-So the split is the point, not an accident of layout. Flink ships the work
-description; this ships the rate and the kernel.
+Flink discovers an accelerator through `ServiceLoader` and knows nothing about the one
+it finds — not the framework, not the device API, not the vendor. This repository is
+the other side of that interface. It holds everything Flink must not: kernel
+generation, buffer layouts, staging widths, and every constant calibrated against a
+particular card.
 
-## What it needs
+### Why it is not part of Flink
 
-- **Flink with the accelerator SPI.** It is not in any release yet — the
-  interfaces this implements (`AcceleratorProvider`, `AccelNode`, the IR) exist
-  only on the `gpu-offload` branch. Build that with `mvn install -DskipTests`
-  first.
-- **TornadoVM 8.1.0**, from Maven Central. Nothing has to be built to compile
-  this or to run its tests. Running on a *device* needs an SDK with the CUDA
-  backend: `sdk install tornadovm 8.1.0-jdk21-cuda`. That released SDK is
-  sufficient for everything here, the cuDF path included — 8.1.0 ships
-  `lib/libtornado-cudf.so` already built, where earlier releases did not.
-- **RAPIDS libcudf**, for the operators served by cuDF, on `LD_LIBRARY_PATH`.
-  Six directories, not the obvious one; `scripts/run-sql-demos.sh` assembles
-  them and says why. Without it those operators decline and the rest still runs.
-- **JDK 21.** TornadoVM's off-heap arrays are built on `java.lang.foreign`, a
-  preview API on 21 and final on 22; Flink 2.3 has no JDK 22+ profile, so
-  21-with-preview is what a TaskManager running this actually runs on.
+It was, and the build gave the coupling away: Flink's own reactor depended on a vendor
+runtime — a CUDA toolchain, a driver version floor, JVM module-path requirements — and
+the planner emitted `uk.ac.manchester.tornado.api.types.arrays.DoubleArray` into
+generated source. An extension point cannot be proposed on those terms, because the
+vendor *is* the interface.
 
-## Build
+TornadoVM's artifacts were also unpublished then, and that is the part people noticed.
+They are on Maven Central now and it changes nothing: a checkout of Flink still must
+not need a GPU toolchain to build. Flink ships the work description; this ships the
+rate and the kernel.
 
-    mvn install
+## What you need
 
-## Deploy
-
-Put `flink-jitsql-plugin/target/flink-jitsql-plugin-*.jar` in a
-distribution's `lib/`, and start the TaskManagers with TornadoVM's JVM arguments.
-`flink-jitsql-plugin/scripts/gpu-cluster-setup.sh` does both.
-
-**[DEPLOYMENT.md](DEPLOYMENT.md)** has the whole picture: how the four pieces fit
-together, the build order and why it is strict, what the setup script changes, and
-the couplings that fail at runtime rather than at build time.
-
-A TaskManager without the jar, without a device, or without those JVM arguments
-runs the code-generated operator instead and logs why. Nothing fails.
-
-## Layout
-
-| module | what it is |
+| | |
 |---|---|
-| `flink-jitsql-plugin` | the provider: kernel generation, gathers, the staging operator |
-| `flink-jitsql-bench` | the runnable examples, one jar each |
+| GPU | NVIDIA, compute capability 7.0+, 8 GiB or more |
+| Driver | 525 or newer, for CUDA 12 |
+| JDK | **exactly 21** — TornadoVM's off-heap arrays are `java.lang.foreign`, preview on 21 and final on 22, and Flink 2.3 has no JDK 22+ profile |
+| Maven | 3.9 or newer |
+| TornadoVM | **8.1.0**, from Maven Central to compile. To reach a device: `sdk install tornadovm 8.1.0-jdk21-cuda`. The released SDK is enough, the cuDF path included — 8.1.0 ships `lib/libtornado-cudf.so` built, where earlier releases did not |
+| RAPIDS libcudf | for the operators cuDF serves. `source scripts/cudf-env.sh` installs it from NVIDIA's wheels |
+| Apache Flink | the accelerator SPI, which is in no release — branch `gpu-offload` of [`beestream-ai/flink`](https://github.com/beestream-ai/flink) |
 
-The benchmarks, the measured applications and the results are in
-[`flink-jitsql-benchmarking`](https://github.com/beestream-ai/flink-jitsql-benchmarking).
-A benchmark is not a thing you read to understand a project, so what is left here
-is the examples that demonstrate the mechanism: one query each, and no timings.
+Only `mvn test` is needed to run the 124 unit tests. Everything else is needed to
+reach a GPU.
+
+## Getting it running
+
+```bash
+# the Flink SPI, which is not released
+git clone --branch gpu-offload https://github.com/beestream-ai/flink && cd flink
+./mvnw install -DskipTests -Dfast -pl flink-table/flink-table-common,flink-table/flink-table-runtime -am
+cd ..
+
+git clone https://github.com/beestream-ai/flink-jitsql && cd flink-jitsql
+export JAVA_HOME=/path/to/jdk-21
+export TORNADOVM_HOME=$HOME/.sdkman/candidates/tornadovm/8.1.0-jdk21-cuda
+source scripts/cudf-env.sh     # RAPIDS libcudf, six directories of it
+scripts/preflight.sh           # says what is wrong before a run does
+mvn install
+```
+
+Point `TORNADOVM_HOME` at the **versioned** directory, never at
+`~/.sdkman/candidates/tornadovm/current`: `current` follows whatever was installed
+last, and here it resolved to a 2.2.0 OpenCL SDK while everything was built against
+8.1.0 CUDA. `preflight.sh` catches exactly that.
+
+Every path is overridable; `scripts/env.sh` lists them and derives the rest from the
+repository root, so a clone anywhere works without editing anything.
+
+## Did it work
+
+```bash
+scripts/run-sql-demos.sh check      # every operator shape, both arms, compared row by row
+```
+
+must end:
+
+```
+CHECKS: 10, FAILURES: 0
+```
+
+Each case says whether work reached the device, and when it did not, the planner's own
+reason — `a sort key of type DOUBLE NOT NULL is not ordered on device`, and so on. A
+case that agrees while nothing ran on the device has checked that the CPU equals the
+CPU; it says `SAME (cpu)` rather than counting as a device result.
+
+If everything says `cpu`, run the smoke test before suspecting this code:
+
+```bash
+scripts/run-sql-demos.sh smoke      # one kernel, no Flink. Ends: SMOKE: OK
+```
+
+It separates *TornadoVM is not working here* from *this project is not reaching it*.
+The first is far more common and is not a defect in anything here.
 
 ## Two examples to read first
-
-The examples in `flink-jitsql-bench` all run a query and report no timings. These
-two are the ones to start with. They are written the way
-`WordCountSQLExample` is — one class, one `main`, the SQL in the middle of it —
-they run the query once, and they report no timings at all. Between them they show
-the two halves of the integration.
 
 | example | what runs on the device | how you see that it did |
 |---|---|---|
@@ -100,7 +122,7 @@ point rather than a gap: there is no generated kernel, because the operator was
 served by a library.
 
 The script assembles the four things that are properties of the deployment rather
-than of the query — TornadoVM's JVM arguments, the two flags that make device
+than of the query — TornadoVM's JVM arguments, the flags that make device
 arithmetic agree with the CPU's, RAPIDS on `LD_LIBRARY_PATH`, and the provider jar
 — and validates them before starting a JVM. `VERBOSE=1` turns on the accelerator's
 own logging, which is what to do if no kernel and no `LAUNCH` appear. See
@@ -108,73 +130,58 @@ own logging, which is what to do if no kernel and no `LAUNCH` appear. See
 
 **Neither example measures anything.** They demonstrate that the mechanism works
 and let you see it working. For a number, with an environment record, repetitions
-and a CPU arm behind it, use `HaversineBenchmark` and `SortBenchmark`.
+and a CPU arm behind it, see
+[`flink-jitsql-benchmarking`](https://github.com/beestream-ai/flink-jitsql-benchmarking).
 
-## What each benchmark is evidence of
+## How to see why a query did not offload
 
-The examples do not all claim the same thing, and the difference is the difference
-between a feature and a research result. Two kinds live here.
+Two surfaces, and the split is deliberate — a planner's reasons are about the query,
+a TaskManager's are about the machine it turned out to have.
 
-### Transparent Table API acceleration
-
-The user writes ordinary SQL. There is no GPU-specific application code, no hint,
-no annotation, no API — the provider is discovered on the TaskManager and decides
-for itself. This is the claim the integration exists to support.
-
-| example | what it shows |
+| | |
 |---|---|
-| **`HaversineBenchmark`** | **the reference application**, and the primary transparent example. Enough transcendental arithmetic per row to offset staging, over an ordinary table. Its natural form has no `WHERE`. |
-| `HaversineBenchmark --near` | **a mechanism test, not an application.** The `WHERE` exists to exercise the cuDF compaction; the threshold was chosen to make the path engage, not because anyone asked for readings within 2000 km. Use it to check the mechanism works end to end; do not quote it as a workload result. `SensorAnomalyBenchmark` is the application for that question. |
-| **`SensorAnomalyBenchmark`** | **screening telemetry for anomalies**, and the honest home of the compaction question. Selectivity is intrinsic here rather than contrived — screening means almost everything is normal — so "does packing survivors on the device pay" has a real answer. Reports exact and floating-point columns side by side so membership and arithmetic can be judged apart. |
-| `BlackScholesBenchmark` | a second arithmetic stress case. **Its normal CDF is a `tanh` approximation**, chosen because it is branchless and therefore expressible as one projection. It is not a financially authoritative pricing implementation and must not be quoted as one; what it measures is arithmetic throughput. Both paths use the same approximation, so the CPU/GPU comparison is exact even where the approximation is not. |
-| `GroupedAggregateBenchmark`, `JoinBenchmark`, `SortBenchmark`, `OverAggregateBenchmark` | operator-seam tests. They show that the seam works and what it costs. They are **not** headline performance claims: row marshalling and whole-partition buffering dominate them. |
-| `MixedTypeVerification` | correctness across column types, not speed. |
-| **`HaversineSQLExample`**, **`CudfSortSQLExample`** | the two above. They are demonstrations, not measurements: one run, one arm, no timings. They are evidence that a query reached a device, and of nothing else. |
+| `EXPLAIN` | what the **planner** decided, per subtree: `GPU  subtree 0: ...` or `CPU  ...` with the reason under it. Properties of the query — an operator with no accelerator IR, a type that is not ordered on device, a projection whose arithmetic may round differently |
+| metrics | what the **TaskManager** decided, per subtask, as `AcceleratorDeclineReason`: `ACCELERATED`, `NO_PROVIDER`, and the rest. Properties of the machine — no provider on the classpath, no device, a driver that did not load |
 
-### Accelerator-native resident experiments
+`NO_PROVIDER` is the ordinary outcome on most machines and is not an error. It is also
+the one that most often surprises someone who read an `EXPLAIN` saying otherwise.
 
-`KMeansBenchmark`, `LogisticRegressionBenchmark`, `FeatureGramBenchmark` and
-`ReferenceJoinBenchmark` drive an engine (`KMeansEngine`, `LogisticRegressionEngine`,
-`GpuGramEngine`, `ReferenceJoinEngine`) through direct transformations over data
-that stays resident on the device between iterations.
+## What it handles
 
-**They are not transparent Table API acceleration and must never be reported as
-if they were.** They are valuable TornadoVM results about a resident execution
-model, and their very large multi-iteration gains are real for that model — but
-they are not apples-to-apples with a SQL job that re-reads and rebuilds its state
-on every iteration, which is what the CPU side of such a comparison does.
+Bounded batch `Calc` (projection and filter), `GROUP BY`, joins, sorts and over-aggregates,
+over fixed-width numeric columns. Generated CUDA kernels for the arithmetic; cuDF through
+TornadoVM's binding for the relational primitives a kernel cannot express — a grouped
+aggregate needs cross-row cooperation that no `@Parallel` loop states.
 
-A figure from one of these is only meaningful alongside all three of:
+## What it does not do
 
-1. standard SQL / multi-job execution;
-2. the equivalent **CPU-resident** algorithm;
-3. the **GPU-resident** algorithm.
+- **Streaming.** Explicit non-goal for v1: output is deferred by a full batch and staging
+  state does not survive a checkpoint barrier.
+- **Nullable expression inputs.** `NOT NULL` in the DDL is the one thing a query author
+  has to write, and the one sanctioned exception to writing nothing.
+- **Strings, decimals, structs** in a kernel, and any operator shape the planner declines.
 
-Quoting (3) against (1) measures the execution model, not the device.
+All of these are refused **while planning**, so the query keeps the path it already had.
+Planning-time refusal is not executor-time fallback: once a plan holds a kernel, a failure
+during execution fails the task.
 
-If resident iterative work becomes a product direction it needs its own proposal —
-an explicit accelerator-native operator or library, with distribution, reduction,
-state, checkpoint, precision and termination semantics stated. It is not an
-extension of the offload path and should not be presented as one.
+## Status
 
-### Reading a compaction result
+Research code. One machine, one card, bounded batch, Flink `local` and a single-node
+cluster. No multi-GPU and no production claim. The SPI it implements is in no Flink
+release and lives on a fork; until a FLIP lands, that fork has to be built first.
 
-The device compaction is worth exactly what the rows it discards would have cost
-to copy back, so its value is a function of **selectivity** and nothing else. At
-10% survival it moves a tenth of the bytes out; at 90% it moves nine tenths and
-still pays for three extra device kernels a batch. A benchmark that does not state
-its selectivity has not reported the result.
+Numbers, with the environment they were measured in, are in
+[`flink-jitsql-benchmarking`](https://github.com/beestream-ai/flink-jitsql-benchmarking).
+Deployment, the build order and the couplings that fail at run time rather than at build
+time are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
-Two numbers make a compaction claim checkable, and both are printed: the bytes
-actually moved (`OffloadMetrics`, in the TaskManager log) and the survivor count.
-`TORNADOVM_ACCELERATOR_COMPACTION=false` runs the identical workload with the host
-drain instead, which is the only way to attribute a difference to the compaction
-rather than to the device.
+## License
 
-### What every reported number must carry
+flink-jitsql is released under the [Apache License, Version 2.0](LICENSE). Copyright (c)
+2026 Beestream Ltd. Every source file carries the matching header.
 
-`BenchmarkRun` collects it and the benchmarks print it: exact commits and build,
-JVM flags, CUDA and driver versions, GPU and CPU model, clocks and power limit,
-host load, dataset checksum and shape, parallelism and batch size, warm-up policy,
-repetitions, and median / p95 / min / max / stddev with the cold run reported
-separately. A time without that beside it is an anecdote.
+Nothing third-party is included here; what the build and the examples fetch from elsewhere
+is listed in [NOTICE](NOTICE). In particular, the Flink SPI this implements stays under the
+Apache Software Foundation's licence and keeps its file headers, and no file here ships in
+Flink's package namespace.

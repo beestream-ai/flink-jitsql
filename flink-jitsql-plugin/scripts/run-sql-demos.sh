@@ -16,7 +16,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 <haversine|cudf-sort|cudf-groupby|gram> [--printKernel] [--printBytecodes]" \
+    echo "usage: $0 <check|smoke|haversine|cudf-sort|cudf-groupby|gram> [--printKernel] [--printBytecodes]" \
          "[--rows N] [--data DIR]" >&2
     exit 1
 }
@@ -24,6 +24,11 @@ usage() {
 DEMO="${1:-}"
 shift || true
 case "${DEMO}" in
+    # The two that answer "does this work here", before any demo that assumes it does.
+    # check runs every operator shape in both arms and ends CHECKS: n, FAILURES: 0.
+    # smoke runs one kernel and nothing of this project's, so a failure means the machine.
+    check)      MAIN=ai.beestream.flink.jitsql.bench.IntegrationCheck ;;
+    smoke)      MAIN=ai.beestream.flink.jitsql.bench.FrameworkSmokeTest ;;
     haversine)  MAIN=ai.beestream.flink.jitsql.bench.HaversineSQLExample ;;
     cudf-sort)  MAIN=ai.beestream.flink.jitsql.bench.CudfSortSQLExample ;;
     cudf-groupby) MAIN=ai.beestream.flink.jitsql.bench.CudfGroupBySQLExample ;;
