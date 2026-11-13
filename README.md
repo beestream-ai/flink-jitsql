@@ -21,19 +21,6 @@ the other side of that interface. It holds everything Flink must not: kernel
 generation, buffer layouts, staging widths, and every constant calibrated against a
 particular card.
 
-### Why it is not part of Flink
-
-It was, and the build gave the coupling away: Flink's own reactor depended on a vendor
-runtime — a CUDA toolchain, a driver version floor, JVM module-path requirements — and
-the planner emitted `uk.ac.manchester.tornado.api.types.arrays.DoubleArray` into
-generated source. An extension point cannot be proposed on those terms, because the
-vendor *is* the interface.
-
-TornadoVM's artifacts were also unpublished then, and that is the part people noticed.
-They are on Maven Central now and it changes nothing: a checkout of Flink still must
-not need a GPU toolchain to build. Flink ships the work description; this ships the
-rate and the kernel.
-
 ## What you need
 
 | | |
