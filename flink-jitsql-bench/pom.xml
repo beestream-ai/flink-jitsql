@@ -39,6 +39,22 @@ limitations under the License.
 	</description>
 
 	<dependencies>
+		<!--
+			The filesystem connector and the CSV format, so IntegrationCheck and the examples run
+			from this module alone rather than only inside a Flink distribution that happens to
+			have them in lib/. A check you cannot run without first assembling a distribution is
+			not the one-command check it claims to be.
+		-->
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-connector-files</artifactId>
+			<version>${flink.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.flink</groupId>
+			<artifactId>flink-csv</artifactId>
+			<version>${flink.version}</version>
+		</dependency>
 		<dependency>
 			<groupId>ai.beestream</groupId>
 			<artifactId>flink-jitsql-plugin</artifactId>
@@ -119,6 +135,42 @@ limitations under the License.
 				<artifactId>maven-jar-plugin</artifactId>
 				<version>3.4.1</version>
 				<executions>
+					<execution>
+						<id>IntegrationCheck</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<classifier>IntegrationCheck</classifier>
+							<archive>
+								<manifestEntries>
+									<program-class>ai.beestream.flink.jitsql.bench.IntegrationCheck</program-class>
+								</manifestEntries>
+							</archive>
+							<includes>
+								<include>ai/beestream/flink/jitsql/bench/IntegrationCheck*</include>
+							</includes>
+						</configuration>
+					</execution>
+					<execution>
+						<id>FrameworkSmokeTest</id>
+						<phase>package</phase>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+						<configuration>
+							<classifier>FrameworkSmokeTest</classifier>
+							<archive>
+								<manifestEntries>
+									<program-class>ai.beestream.flink.jitsql.bench.FrameworkSmokeTest</program-class>
+								</manifestEntries>
+							</archive>
+							<includes>
+								<include>ai/beestream/flink/jitsql/bench/FrameworkSmokeTest*</include>
+							</includes>
+						</configuration>
+					</execution>
 					<execution>
 						<id>GpuOffloadExample</id>
 						<phase>package</phase>
@@ -362,6 +414,8 @@ limitations under the License.
 						</goals>
 						<configuration>
 							<target>
+								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-IntegrationCheck.jar" tofile="${project.build.directory}/IntegrationCheck.jar"/>
+								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-FrameworkSmokeTest.jar" tofile="${project.build.directory}/FrameworkSmokeTest.jar"/>
 								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-GpuOffloadExample.jar" tofile="${project.build.directory}/GpuOffloadExample.jar"/>
 								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-DeviceConformanceSuite.jar" tofile="${project.build.directory}/DeviceConformanceSuite.jar"/>
 								<copy file="${project.build.directory}/${project.artifactId}-${project.version}-MixedTypeVerification.jar" tofile="${project.build.directory}/MixedTypeVerification.jar"/>
