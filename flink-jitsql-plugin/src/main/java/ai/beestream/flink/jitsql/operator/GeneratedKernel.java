@@ -297,6 +297,12 @@ final class GeneratedKernel implements AutoCloseable {
         protected Class<?> findClass(String name) throws ClassNotFoundException {
             byte[] bytes = classes.get(name);
             if (bytes == null) {
+                // A lowered user function. It is not one of this kernel's own classes, but it is
+                // reachable only from this kernel, and TornadoVM resolves a called class through
+                // the caller's loader.
+                bytes = ai.beestream.flink.jitsql.udf.LoweredClasses.bytesOf(name);
+            }
+            if (bytes == null) {
                 throw new ClassNotFoundException(name);
             }
             return defineClass(name, bytes, 0, bytes.length);
@@ -305,10 +311,15 @@ final class GeneratedKernel implements AutoCloseable {
         @Override
         public InputStream getResourceAsStream(String name) {
             if (name.endsWith(".class")) {
-                byte[] bytes =
-                        classes.get(
-                                name.substring(0, name.length() - ".class".length())
-                                        .replace('/', '.'));
+                String binary =
+                        name.substring(0, name.length() - ".class".length()).replace('/', '.');
+                byte[] bytes = classes.get(binary);
+                if (bytes == null) {
+                    // This is the lookup TornadoVM's compiler actually makes for a called class,
+                    // so a lowered user function has to be answerable here or the kernel fails to
+                    // compile on the device with TC-E1007.
+                    bytes = ai.beestream.flink.jitsql.udf.LoweredClasses.bytesOf(binary);
+                }
                 if (bytes != null) {
                     return new ByteArrayInputStream(bytes);
                 }
@@ -336,6 +347,10 @@ final class GeneratedKernel implements AutoCloseable {
                 entries.add(location);
             }
         }
+        // Lowered user functions. A generated kernel that calls one is compiled against the
+        // trampoline's class file, which exists only because StaticUdfLowering wrote it there --
+        // a class defined in a loader is callable but not compilable against.
+        entries.add(ai.beestream.flink.jitsql.udf.LoweredClasses.outputDirectory().toString());
         return String.join(java.io.File.pathSeparator, entries);
     }
 

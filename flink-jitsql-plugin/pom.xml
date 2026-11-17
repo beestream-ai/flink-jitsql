@@ -138,5 +138,25 @@ limitations under the License.
 				</exclusion>
 			</exclusions>
 		</dependency>
+		<!--
+			ASM, for reading the bytecode of a user's ScalarFunction. Shaded into the plugin jar so
+			that a TaskManager carrying some other ASM version on its classpath cannot decide which
+			one this analyser gets.
+		-->
+		<dependency>
+			<groupId>org.ow2.asm</groupId>
+			<artifactId>asm</artifactId>
+			<version>9.8</version>
+		</dependency>
+		<dependency>
+			<groupId>org.ow2.asm</groupId>
+			<artifactId>asm-tree</artifactId>
+			<version>9.8</version>
+		</dependency>
+		<dependency>
+			<groupId>org.ow2.asm</groupId>
+			<artifactId>asm-analysis</artifactId>
+			<version>9.8</version>
+		</dependency>
 	</dependencies>
 </project>
