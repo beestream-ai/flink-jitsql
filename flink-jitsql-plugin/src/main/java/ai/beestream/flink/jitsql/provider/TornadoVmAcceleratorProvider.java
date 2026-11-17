@@ -15,6 +15,11 @@
  */
 package ai.beestream.flink.jitsql.provider;
 
+import ai.beestream.flink.jitsql.catalogue.CudfCapabilityCatalogue;
+import ai.beestream.flink.jitsql.catalogue.CudfPrimitive;
+import ai.beestream.flink.jitsql.catalogue.Route;
+import ai.beestream.flink.jitsql.catalogue.RoutingContext;
+import ai.beestream.flink.jitsql.catalogue.RoutingDecisions;
 import ai.beestream.flink.jitsql.codegen.AccelKernelGenerator;
 import ai.beestream.flink.jitsql.codegen.DecimalCoercion;
 import ai.beestream.flink.jitsql.codegen.DriftSensitivePredicate;
@@ -38,7 +43,6 @@ import ai.beestream.flink.jitsql.operator.GpuSortOperator;
 import org.apache.flink.streaming.api.operators.SimpleOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperatorFactory;
 import org.apache.flink.table.accelerator.AccelAggCall;
-import org.apache.flink.table.accelerator.AccelAggFunction;
 import org.apache.flink.table.accelerator.AccelAggregate;
 import org.apache.flink.table.accelerator.AccelExpression;
 import org.apache.flink.table.accelerator.AccelFunction;
@@ -64,6 +68,7 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.io.Serializable;
+import java.util.EnumSet;
 import java.util.Optional;
 
 /**
@@ -259,17 +264,31 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         // admitted once the same Calc was fused under the Sort. The ops ceiling was bypassed
         // the same way, and its own comment describes the failure it guards against: a batch
         // that reported complete having computed nothing.
-        if (subtree instanceof AccelAggregate) {
-            return acceptAggregate((AccelAggregate) subtree, work);
+        // The one hand-written branch left, and deliberately ahead of the catalogue: the frozen
+        // cuBLAS route. A Gram matrix is the single shape both a library and a generated kernel
+        // can express, so it is the one place the capability rule does not decide by itself --
+        // which is exactly why libraries are out of the catalogue's scope rather than in it.
+        if (subtree instanceof AccelAggregate
+                && ((AccelAggregate) subtree).grouping().length == 0) {
+            Optional<AcceleratorPlan> gram = acceptGram((AccelAggregate) subtree, work);
+            if (gram.isPresent()) {
+                return gram;
+            }
         }
-        if (subtree instanceof AccelSort) {
-            return acceptSort((AccelSort) subtree, work);
+        Route route = CudfCapabilityCatalogue.route(subtree, work, ROUTING);
+        if (!route.accepted()) {
+            // INFO rather than DEBUG, and with the code: a declined operator is asked about once
+            // per operator, and "the provider declined" is all Flink itself can say.
+            LOG.info(
+                    "declining {} [{}]: {}",
+                    subtree.getClass().getSimpleName(),
+                    route.code().orElse(null),
+                    route.because().orElse(""));
+            LOG.debug("everything this thread has routed:\n{}", RoutingDecisions.format());
+            return Optional.empty();
         }
-        if (subtree instanceof AccelJoin) {
-            return acceptJoin((AccelJoin) subtree, work);
-        }
-        if (subtree instanceof AccelOverAggregate) {
-            return acceptOverAggregate((AccelOverAggregate) subtree, work);
+        if (route.kind() == Route.Kind.CUDF) {
+            return build(route.primitive().orElseThrow(), subtree, work);
         }
         Optional<GpuKernelSource> kernel =
                 AccelKernelGenerator.generate(subtree, Integer.toHexString(subtree.hashCode()));
@@ -344,33 +363,100 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
         return false;
     }
 
-    private Optional<AcceleratorPlan> acceptAggregate(AccelAggregate agg, AccelWorkProfile work) {
-        if (agg.grouping().length == 0) {
-            return acceptGram(agg, work);
+    /**
+     * What this provider was asked on this thread, what it answered, and why.
+     *
+     * <p>The counterpart of the Spark integration's {@code decisions()}, and here for the same
+     * reason: "the provider declined" is all Flink can report, and the question people actually
+     * have is which route lost. Reading it costs nothing and needs no debug logging turned on.
+     */
+    public static java.util.List<RoutingDecisions.Decision> decisions() {
+        return RoutingDecisions.decisions();
+    }
+
+    /** Only the refusals, which is the half of {@link #decisions()} anybody asks for. */
+    public static java.util.List<RoutingDecisions.Decision> refusals() {
+        return RoutingDecisions.refusals();
+    }
+
+    /**
+     * What the catalogue is true of on this TaskManager.
+     *
+     * <p>Resolved once, because every {@code Cudf.isXxxAvailable()} probe loads a shared library on
+     * first use and routing happens per subtask.
+     */
+    private static final RoutingContext ROUTING = routingContext();
+
+    private static RoutingContext routingContext() {
+        if (UNAVAILABLE != null) {
+            return RoutingContext.noDevice();
         }
+        if (!CUDF_AVAILABLE) {
+            return RoutingContext.kernelOnly(MAX_SORT_BYTES);
+        }
+        EnumSet<CudfPrimitive.Availability> available = EnumSet.of(CudfPrimitive.Availability.CUDF);
+        if (uk.ac.manchester.tornado.cudf.Cudf.isParquetAvailable()) {
+            available.add(CudfPrimitive.Availability.PARQUET);
+        }
+        if (uk.ac.manchester.tornado.cudf.Cudf.isColumnsAvailable()) {
+            available.add(CudfPrimitive.Availability.COLUMNS);
+        }
+        if (uk.ac.manchester.tornado.cudf.Cudf.isSortKeysAvailable()) {
+            available.add(CudfPrimitive.Availability.SORT_KEYS);
+        }
+        if (uk.ac.manchester.tornado.cudf.Cudf.isSortedOrderLongsAvailable()) {
+            available.add(CudfPrimitive.Availability.SORTED_ORDER_LONGS);
+        }
+        if (uk.ac.manchester.tornado.cudf.Cudf.isStringColumnsAvailable()) {
+            available.add(CudfPrimitive.Availability.STRING_COLUMNS);
+        }
+        if (uk.ac.manchester.tornado.cudf.Cudf.isWriterAvailable()) {
+            available.add(CudfPrimitive.Availability.WRITER);
+        }
+        return RoutingContext.of(true, true, available, MAX_SORT_BYTES, MAX_JOIN_BYTES);
+    }
+
+    /**
+     * Builds the operator for the primitive the catalogue chose.
+     *
+     * <p>Deciding and building are separate on purpose. Everything above this line is a question
+     * about what cuDF can express; everything below is a question about whether this provider can
+     * realise it, which can still fail -- a kernel that will not generate, a row that will not
+     * stage. Those are not routing decisions and they do not belong in the catalogue.
+     */
+    private Optional<AcceleratorPlan> build(
+            CudfPrimitive primitive, AccelNode subtree, AccelWorkProfile work) {
+        if (primitive == CudfCapabilityCatalogue.GROUP_SUM) {
+            return acceptAggregate((AccelAggregate) subtree, work);
+        }
+        if (primitive == CudfCapabilityCatalogue.SORTED_ORDER) {
+            return acceptSort((AccelSort) subtree, work);
+        }
+        if (primitive == CudfCapabilityCatalogue.INNER_JOIN) {
+            return acceptJoin((AccelJoin) subtree, work);
+        }
+        if (primitive == CudfCapabilityCatalogue.RUNNING_SUM) {
+            return acceptOverAggregate((AccelOverAggregate) subtree, work);
+        }
+        // A scan is cuDF's work and the catalogue says so, but it is served by createScanSource
+        // rather than by decorating a plan Flink already has -- a source that has already decoded
+        // on the CPU has paid the cost the device read exists to avoid. Nothing to build here.
+        LOG.info(
+                "declining {}: {} is the right primitive but acceptSubtree does not emit it",
+                subtree.getClass().getSimpleName(),
+                primitive);
+        return Optional.empty();
+    }
+
+    private Optional<AcceleratorPlan> acceptAggregate(AccelAggregate agg, AccelWorkProfile work) {
         // Louder than the Calc path's reasons, which are DEBUG. A declined Calc is the ordinary
         // case and there is one per subtree; a declined aggregate means the planner built a fused
         // node for this query and then found nothing to run it, which happens once per operator and
         // is the question an operator will actually ask. Finding out took a cluster round trip once
         // already, because a DEBUG line is only useful on a cluster configured to print it.
-        if (!CUDF_AVAILABLE) {
-            LOG.info("declining the aggregate: the cuDF binding is not usable in this JVM");
-            return Optional.empty();
-        }
-        if (agg.grouping().length != 1) {
-            LOG.info("declining the aggregate: {} grouping columns, not 1", agg.grouping().length);
-            return Optional.empty();
-        }
-        if (agg.calls().size() != 1) {
-            LOG.info("declining the aggregate: {} aggregate calls, not 1", agg.calls().size());
-            return Optional.empty();
-        }
+        // One grouping column, one call, and that call a SUM over a column: all three are the
+        // catalogue's to decide, and it only routes GROUP_SUM here when they hold.
         AccelAggCall call = agg.calls().get(0);
-        if (call.function() != AccelAggFunction.SUM
-                || call.inputField() == AccelAggCall.NO_INPUT_FIELD) {
-            LOG.info("declining the aggregate: {} is not a SUM over a column", call);
-            return Optional.empty();
-        }
         AccelNode projection = agg.inputs().get(0);
         // cudf::groupby reads the key column from device memory, so the key has to be staged even
         // when the projection only passes it through -- which is the ordinary shape of the query,
@@ -466,15 +552,8 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
     private Optional<AcceleratorPlan> acceptSort(AccelSort sort, AccelWorkProfile work) {
         // INFO for the same reason the aggregate's reasons are: one per operator rather than one
         // per subtree, and it is the question an operator will actually ask.
-        if (!CUDF_AVAILABLE) {
-            LOG.info("declining the sort: the cuDF binding is not usable in this JVM");
-            return Optional.empty();
-        }
-        String refusal = GpuSortSpec.refuse(sort, work.estimatedRows(), MAX_SORT_BYTES);
-        if (refusal != null) {
-            LOG.info("declining the sort: {}", refusal);
-            return Optional.empty();
-        }
+        // Whether cuDF can order this at all is the catalogue's question, asked through the same
+        // GpuSortSpec.refuse this used to call directly.
         GpuSortSpec spec =
                 new GpuSortSpec(
                         sort.sortField(), sort.outputType(), work.estimatedRows(), sort.limit());
@@ -621,15 +700,7 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
      * be slower and larger.
      */
     private Optional<AcceleratorPlan> acceptJoin(AccelJoin join, AccelWorkProfile work) {
-        if (!CUDF_AVAILABLE) {
-            LOG.info("declining the join: the cuDF binding is not usable in this JVM");
-            return Optional.empty();
-        }
-        String refusal = GpuJoinSpec.refuse(join, MAX_JOIN_BYTES);
-        if (refusal != null) {
-            LOG.info("declining the join: {}", refusal);
-            return Optional.empty();
-        }
+        // Expressibility is the catalogue's question, through GpuJoinSpec.refuse.
         GpuJoinSpec spec =
                 new GpuJoinSpec(
                         join.buildKeyField(),
@@ -703,15 +774,7 @@ public class TornadoVmAcceleratorProvider implements AcceleratorProvider {
      */
     private Optional<AcceleratorPlan> acceptOverAggregate(
             AccelOverAggregate over, AccelWorkProfile work) {
-        if (!CUDF_AVAILABLE) {
-            LOG.info("declining the window: the cuDF binding is not usable in this JVM");
-            return Optional.empty();
-        }
-        String refusal = GpuOverAggregateSpec.refuse(over);
-        if (refusal != null) {
-            LOG.info("declining the window: {}", refusal);
-            return Optional.empty();
-        }
+        // Expressibility is the catalogue's question, through GpuOverAggregateSpec.refuse.
         GpuOverAggregateSpec spec =
                 new GpuOverAggregateSpec(
                         over.valueField(), over.inputs().get(0).outputType(), over.outputType());
