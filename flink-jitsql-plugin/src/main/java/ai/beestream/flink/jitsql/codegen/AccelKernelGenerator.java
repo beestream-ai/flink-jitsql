@@ -15,6 +15,9 @@
  */
 package ai.beestream.flink.jitsql.codegen;
 
+import ai.beestream.flink.jitsql.udf.ArrayParameterRewrite;
+import ai.beestream.flink.jitsql.udf.UdfKernelSupport;
+
 import org.apache.flink.table.accelerator.AccelCall;
 import org.apache.flink.table.accelerator.AccelExpression;
 import org.apache.flink.table.accelerator.AccelFilter;
@@ -23,14 +26,19 @@ import org.apache.flink.table.accelerator.AccelInputRef;
 import org.apache.flink.table.accelerator.AccelLiteral;
 import org.apache.flink.table.accelerator.AccelNode;
 import org.apache.flink.table.accelerator.AccelProject;
+import org.apache.flink.table.accelerator.AccelUdfCall;
 import org.apache.flink.table.data.DecimalData;
 import org.apache.flink.table.data.DecimalDataUtils;
 import org.apache.flink.table.types.logical.DecimalType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.LogicalTypeRoot;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nullable;
 
+import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -72,6 +80,8 @@ import java.util.TreeSet;
  * walk the results anyway to build output rows.
  */
 public final class AccelKernelGenerator {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AccelKernelGenerator.class);
 
     /**
      * Words that are legal Java identifiers but reserved in OpenCL C.
@@ -199,6 +209,7 @@ public final class AccelKernelGenerator {
         }
 
         NULLABLE_INPUTS.get().clear();
+        LIST_INPUTS.get().clear();
         CSE.set(new Cse());
         final Map<Integer, String> inputs = new LinkedHashMap<>();
         final Map<Integer, GpuValueType> inputTypes = new LinkedHashMap<>();
@@ -283,8 +294,10 @@ public final class AccelKernelGenerator {
                             ? rendered.value
                             : "(" + rendered.valid + " != 0 && " + rendered.value + ")";
         }
-        if (inputs.isEmpty()) {
-            // A kernel with no input column has nothing to size the parallel loop by.
+        if (inputs.isEmpty() && LIST_INPUTS.get().isEmpty()) {
+            // A kernel with no input column has nothing to size the parallel loop by. A list
+            // column counts: its offsets carry one entry a row, so the loop is sized the same way
+            // -- which is why this asks about both rather than about the scalar columns alone.
             return Optional.empty();
         }
 
@@ -342,17 +355,22 @@ public final class AccelKernelGenerator {
                         CSE.get().declarations());
         return Optional.of(
                 new GpuKernelSource(
-                        className,
-                        methodName,
-                        source,
-                        inputFields,
-                        stagedTypes,
-                        outputTypes.toArray(new GpuValueType[0]),
-                        renderedCondition != null,
-                        layout,
-                        packedStride,
-                        packedInputStride,
-                        carriesValidity));
+                                className,
+                                methodName,
+                                source,
+                                inputFields,
+                                stagedTypes,
+                                outputTypes.toArray(new GpuValueType[0]),
+                                renderedCondition != null,
+                                layout,
+                                packedStride,
+                                packedInputStride,
+                                carriesValidity)
+                        .withListColumns(
+                                LIST_INPUTS.get().keySet().stream()
+                                        .mapToInt(Integer::intValue)
+                                        .toArray(),
+                                LIST_INPUTS.get().values().toArray(new GpuValueType[0])));
     }
 
     private static String renderClass(
@@ -391,6 +409,12 @@ public final class AccelKernelGenerator {
         StringBuilder sb = new StringBuilder();
         sb.append("import uk.ac.manchester.tornado.api.annotations.Parallel;\n");
         sb.append("import uk.ac.manchester.tornado.api.math.TornadoMath;\n");
+        for (GpuValueType listType : LIST_INPUTS.get().values()) {
+            arrayTypes.add(listType.arrayType());
+        }
+        if (!LIST_INPUTS.get().isEmpty()) {
+            arrayTypes.add("IntArray");
+        }
         for (String arrayType : arrayTypes) {
             sb.append("import uk.ac.manchester.tornado.api.types.arrays.")
                     .append(arrayType)
@@ -430,6 +454,12 @@ public final class AccelKernelGenerator {
         if (carriesValidity) {
             params.add("IntArray inNulls");
             params.add("IntArray outNulls");
+        }
+        // List columns, each as its offsets and its flat child. Always separate parameters: a
+        // packed input array assumes a fixed stride a ragged column does not have.
+        for (Map.Entry<Integer, GpuValueType> list : LIST_INPUTS.get().entrySet()) {
+            params.add("IntArray l" + list.getKey() + "_off");
+            params.add(list.getValue().arrayType() + " l" + list.getKey() + "_val");
         }
         // Last, so the engine can append it without knowing what precedes it.
         params.add("IntArray rows");
@@ -848,6 +878,16 @@ public final class AccelKernelGenerator {
     private static final ThreadLocal<Set<Integer>> NULLABLE_INPUTS =
             ThreadLocal.withInitial(LinkedHashSet::new);
 
+    /**
+     * Columns staged as a cuDF LIST rather than as one value a row: offsets plus a flat child.
+     *
+     * <p>Separate from {@code inputs} because a list column cannot join the packed input array.
+     * Packing assumes a fixed stride, and the whole point of this layout is that rows differ in
+     * length -- so these two buffers are always their own parameters, packed or not.
+     */
+    private static final ThreadLocal<java.util.LinkedHashMap<Integer, GpuValueType>> LIST_INPUTS =
+            ThreadLocal.withInitial(java.util.LinkedHashMap::new);
+
     /** The pass-through projection reading this input field, or null if there is none. */
     private static @Nullable AccelExpression passThroughOf(AccelProject project, int inputField) {
         for (AccelExpression expression : project.projections()) {
@@ -908,6 +948,9 @@ public final class AccelKernelGenerator {
             }
             return new Rendered(Double.toString(d), Rendered.ALWAYS);
         }
+        if (node instanceof AccelUdfCall) {
+            return renderUdf((AccelUdfCall) node, inputs, types);
+        }
         AccelCall call = (AccelCall) node;
         List<Rendered> operands = new ArrayList<>(call.operands().size());
         for (AccelExpression operand : call.operands()) {
@@ -967,6 +1010,130 @@ public final class AccelKernelGenerator {
         // Every other operator here is strict: absent in, absent out. AND and OR are not, and are
         // handled above, where three-valued logic computes value and validity together.
         return named(new Rendered(rendered, andValidity(operands)), javaTypeOf(call.outputType()));
+    }
+
+    /**
+     * Renders a call to a user's scalar function as a call to its lowered static copy.
+     *
+     * <p>The body is not re-expressed here and could not be: it is a method, and a method can hold
+     * a loop that no expression tree can. What is emitted is a call, and TornadoVM compiles the
+     * callee along with the kernel. {@code StaticUdfLowering} has already written the trampoline's
+     * class file where {@code GeneratedKernel} compiles, so {@code javac} can resolve the name.
+     *
+     * <p>Strict, like every other operator here except AND and OR: absent in, absent out. A user
+     * function is opaque, so there is no basis for anything cleverer -- it cannot be known that an
+     * absent operand would not have decided the answer.
+     *
+     * <p>Returns null, which is this generator's ordinary refusal, when the function cannot be
+     * lowered. The reason is logged rather than thrown: the caller has a CPU operator waiting.
+     */
+    private static @Nullable Rendered renderUdf(
+            AccelUdfCall call, Map<Integer, String> inputs, Map<Integer, GpuValueType> types) {
+        List<Rendered> operands = new ArrayList<>(call.operands().size());
+        for (AccelExpression operand : call.operands()) {
+            if (operand.outputType().getTypeRoot() == LogicalTypeRoot.ARRAY) {
+                // Emitted below as a buffer and two bounds, once the flattened signature says
+                // which parameter it feeds. A placeholder keeps the positions lined up.
+                operands.add(new Rendered("0", Rendered.ALWAYS));
+                continue;
+            }
+            Rendered rendered = render(operand, inputs, types);
+            if (rendered == null) {
+                return null;
+            }
+            operands.add(rendered);
+        }
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) {
+            loader = AccelKernelGenerator.class.getClassLoader();
+        }
+        UdfKernelSupport.Resolution resolution = UdfKernelSupport.resolve(call, loader);
+        if (!resolution.usable()) {
+            LOG.info(
+                    "declining the user function {}: {}",
+                    call.className(),
+                    resolution.because().orElse("no reason given"));
+            return null;
+        }
+        Method lowered = resolution.method().orElseThrow();
+        ArrayParameterRewrite.Rewritten flattened = ArrayParameterRewrite.rewrite(lowered);
+        if (!flattened.usable()) {
+            LOG.info("declining the user function {}: {}", call.className(), flattened.because());
+            return null;
+        }
+        // Operands line up with the original signature; the call is emitted against the flattened
+        // one, where each array has become a buffer and two bounds.
+        Class<?>[] parameters = lowered.getParameterTypes();
+        lowered = flattened.method();
+        if (parameters.length != operands.size()) {
+            return null;
+        }
+        // The trampoline's own binary name, which is what javac resolves on the classpath
+        // StaticUdfLowering wrote it to.
+        StringBuilder out = new StringBuilder();
+        out.append(lowered.getDeclaringClass().getName()).append('.').append(lowered.getName());
+        out.append('(');
+        for (int i = 0; i < parameters.length; i++) {
+            if (i > 0) {
+                out.append(", ");
+            }
+            Class<?> parameter = parameters[i];
+            if (parameter.isArray()) {
+                // An array argument is a cuDF LIST: one flat child plus offsets saying where this
+                // row's run begins and ends. The rewritten method takes exactly that, so what is
+                // emitted is the buffer and the row's two bounds.
+                AccelExpression operand = call.operands().get(i);
+                if (!(operand instanceof AccelInputRef)) {
+                    LOG.info(
+                            "declining the user function {}: an array argument has to be a staged"
+                                    + " column, not a computed value",
+                            call.className());
+                    return null;
+                }
+                int column = ((AccelInputRef) operand).index();
+                String base = registerListInput(column, parameter.getComponentType());
+                if (base == null) {
+                    LOG.info(
+                            "declining the user function {}: column {} is not an array of a"
+                                    + " fixed-width numeric type",
+                            call.className(),
+                            column);
+                    return null;
+                }
+                out.append(base)
+                        .append("_val, ")
+                        .append(base)
+                        .append("_off.get(i), ")
+                        .append(base)
+                        .append("_off.get(i + 1)");
+                continue;
+            }
+            out.append('(')
+                    .append(parameter.getName())
+                    .append(") (")
+                    .append(operands.get(i).value)
+                    .append(')');
+        }
+        out.append(')');
+        return named(
+                new Rendered(out.toString(), andValidity(operands)), javaTypeOf(call.outputType()));
+    }
+
+    /** Registers a list column and returns the base name its two buffers are called by. */
+    private static @Nullable String registerListInput(int column, Class<?> elementType) {
+        GpuValueType kind;
+        if (elementType == double.class) {
+            kind = GpuValueType.DOUBLE;
+        } else if (elementType == float.class) {
+            kind = GpuValueType.FLOAT;
+        } else if (elementType == int.class) {
+            kind = GpuValueType.INT;
+        } else {
+            // A long element has no GpuValueType, so nothing downstream could stage it.
+            return null;
+        }
+        LIST_INPUTS.get().put(column, kind);
+        return "l" + column;
     }
 
     /**

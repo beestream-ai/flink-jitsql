@@ -49,6 +49,18 @@ public final class GpuKernelSource implements Serializable {
     /** Whether the kernel takes and returns validity buffers. See {@link #carriesValidity()}. */
     private final boolean carriesValidity;
 
+    /**
+     * Columns staged as a cuDF LIST -- offsets plus a flat child -- rather than one value a row.
+     *
+     * <p>Not a constructor parameter because a list column is discovered while rendering, not while
+     * planning: it is the generator meeting an array argument to a user's function that decides a
+     * column has to be staged this way. Declared here so the engine knows to allocate two buffers
+     * for it and to pass them in the position the signature puts them.
+     */
+    private int[] listFieldIndexes = new int[0];
+
+    private GpuValueType[] listElementTypes = new GpuValueType[0];
+
     public GpuKernelSource(
             String className,
             String methodName,
@@ -151,6 +163,34 @@ public final class GpuKernelSource implements Serializable {
         this.hasFilter = hasFilter;
         this.carriesValidity = carriesValidity;
         this.outputLayout = outputLayout;
+    }
+
+    /** Declares the columns this kernel reads as lists. Returns {@code this}. */
+    public GpuKernelSource withListColumns(int[] fields, GpuValueType[] elementTypes) {
+        if (fields.length != elementTypes.length) {
+            throw new IllegalArgumentException(
+                    "every list column needs an element type: "
+                            + fields.length
+                            + " columns against "
+                            + elementTypes.length
+                            + " types");
+        }
+        this.listFieldIndexes = fields;
+        this.listElementTypes = elementTypes;
+        return this;
+    }
+
+    /** The input fields staged as lists, in the order the signature declares them. */
+    public int[] listFieldIndexes() {
+        return listFieldIndexes;
+    }
+
+    public GpuValueType[] listElementTypes() {
+        return listElementTypes;
+    }
+
+    public boolean hasListColumns() {
+        return listFieldIndexes.length > 0;
     }
 
     public String className() {

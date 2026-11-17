@@ -138,7 +138,10 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
     @Override
     public void processElement(StreamRecord<RowData> element) throws Exception {
         RowData row = element.getValue();
-        if (gathers[0] == null && block == null) {
+        // gathers is empty when every kernel input is a list column -- a projection whose only
+        // work is a user function over ARRAY arguments has no fixed-width column to gather, and
+        // indexing [0] to decide a strategy threw on the first record.
+        if (gathers.length > 0 && gathers[0] == null && block == null) {
             // The concrete RowData implementation is not knowable at plan time -- the planner
             // declares only InternalTypeInfo<RowData> and the connector picks the class -- so the
             // gather strategy is chosen from the first record actually seen.
@@ -186,6 +189,11 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
                 g.accept(row, buffered);
             }
         }
+        // ARRAY columns, staged as offsets plus a flat child. Rows must arrive in order here,
+        // which they do: the offsets are cumulative and `buffered` is the batch position.
+        for (int l = 0; l < engine.listColumnCount(); l++) {
+            engine.listGather(l).accept(row, buffered);
+        }
         for (PassThroughBuffer buffer : passThrough) {
             if (buffer != null) {
                 buffer.accept(row, buffered);
@@ -219,6 +227,8 @@ public class GpuCalcOperator extends AbstractStreamOperator<RowData>
         gatherNanos = 0;
 
         GeneratedKernelEngine.Execution execution = engine.execute(count);
+        // After the execution, never before: the offsets and the child are what it just read.
+        engine.resetListGathers();
 
         long drainStart = System.nanoTime();
         int emitted = engine.compactsOnDeviceNow() ? drainCompacted() : drainMasked(count);

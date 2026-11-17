@@ -20,6 +20,7 @@ import ai.beestream.flink.jitsql.codegen.GpuCalcSpec;
 import ai.beestream.flink.jitsql.codegen.GpuKernelSource;
 import ai.beestream.flink.jitsql.codegen.GpuSortSpec;
 import ai.beestream.flink.jitsql.codegen.GpuValueType;
+import ai.beestream.flink.jitsql.gather.ArrayColumnGather;
 import ai.beestream.flink.jitsql.gather.RowBlockGather;
 import ai.beestream.flink.jitsql.gather.RowGather;
 import ai.beestream.flink.jitsql.metrics.OffloadMetrics;
@@ -143,6 +144,27 @@ public final class GeneratedKernelEngine implements AutoCloseable {
     private Method entry;
 
     private Object[] kernelArgs;
+
+    /**
+     * One gather per {@code ARRAY} column, staging it as offsets plus a flat child.
+     *
+     * <p>Separate from the fixed-width columns because a list column has no width: two rows of the
+     * same column hold different numbers of elements, so it cannot share the stride-indexed buffers
+     * the rest of the row uses.
+     */
+    private ArrayColumnGather[] listGathers = new ArrayColumnGather[0];
+
+    /**
+     * Elements a list column is sized for, per row.
+     *
+     * <p>A budget rather than a measurement, because the child has to be allocated before any row
+     * has been seen. The default is generous for a feature vector and modest in bytes: at the
+     * default batch size a 1024-element column of doubles is 2 GB, which is why a deployment
+     * staging lists has to lower {@code table.exec.accelerator.batch-size} as well. A row that
+     * exceeds the budget is refused by the gather, with the shortfall in the message.
+     */
+    private static final int LIST_ELEMENTS_PER_ROW =
+            Integer.getInteger("flink.accelerator.tornadovm.listElementsPerRow", 1024);
 
     /** Where the cuDF stage writes: one row per distinct key, and the count of them. */
     private IntArray groupKeys;
@@ -348,12 +370,26 @@ public final class GeneratedKernelEngine implements AutoCloseable {
             groupCount.set(0, 0);
         }
 
+        // List columns, allocated here because the kernel's signature already declares them and
+        // the task graph is about to be built around it.
+        int[] listFields = kernel.listFieldIndexes();
+        listGathers = new ArrayColumnGather[listFields.length];
+        for (int i = 0; i < listFields.length; i++) {
+            listGathers[i] =
+                    new ArrayColumnGather(
+                            listFields[i],
+                            elementKindOf(kernel.listElementTypes()[i]),
+                            batchSize,
+                            batchSize * LIST_ELEMENTS_PER_ROW);
+        }
+
         Object[] args =
                 new Object
                         [inputs.length
                                 + outputs.length
                                 + (mask == null ? 0 : 1)
                                 + (kernel.carriesValidity() ? 2 : 0)
+                                + 2 * listGathers.length
                                 + 1];
         int at = 0;
         for (Object in : inputs) {
@@ -369,8 +405,44 @@ public final class GeneratedKernelEngine implements AutoCloseable {
             args[at++] = inNulls;
             args[at++] = outNulls;
         }
+        // Offsets then child, per column, in the order the signature declares them -- after the
+        // outputs and before the row count, which is where renderClass puts them.
+        for (ArrayColumnGather gather : listGathers) {
+            args[at++] = gather.offsetsBuffer();
+            args[at++] = gather.values();
+        }
         args[at] = rows;
         kernelArgs = args;
+    }
+
+    /** How many {@code ARRAY} columns this kernel stages. */
+    public int listColumnCount() {
+        return listGathers.length;
+    }
+
+    /** The gather for one list column, to be fed a row at a time. */
+    public ArrayColumnGather listGather(int index) {
+        return listGathers[index];
+    }
+
+    /** Clears the list gathers for the next batch. Their buffers are reused. */
+    public void resetListGathers() {
+        for (ArrayColumnGather gather : listGathers) {
+            gather.reset();
+        }
+    }
+
+    private static ai.beestream.flink.jitsql.device.ElementKind elementKindOf(GpuValueType type) {
+        switch (type) {
+            case INT:
+                return ai.beestream.flink.jitsql.device.ElementKind.INT;
+            case FLOAT:
+                return ai.beestream.flink.jitsql.device.ElementKind.FLOAT;
+            case DOUBLE:
+                return ai.beestream.flink.jitsql.device.ElementKind.DOUBLE;
+            default:
+                throw new IllegalArgumentException(type + " is not a list element type");
+        }
     }
 
     /**
@@ -447,6 +519,17 @@ public final class GeneratedKernelEngine implements AutoCloseable {
         graph = graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, rows);
         if (inNulls != null) {
             graph = graph.transferToDevice(DataTransferMode.EVERY_EXECUTION, inNulls);
+        }
+        // List columns, on every execution, and never produced on the device by another task the
+        // way the row block's columns are. Leaving them out does not fail: the kernel reads
+        // whatever the allocator left on the card and returns numbers that look entirely
+        // reasonable -- cosine similarities in [0, 1] that are simply not the right ones.
+        for (ArrayColumnGather gather : listGathers) {
+            graph =
+                    graph.transferToDevice(
+                            DataTransferMode.EVERY_EXECUTION,
+                            gather.offsetsBuffer(),
+                            gather.values());
         }
         if (rowBlock != null) {
             graph = graph.task("deinterleave", deinterleaveEntry(), deinterleaveArgs());
